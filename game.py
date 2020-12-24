@@ -1,12 +1,5 @@
-import sys
-import time
-from dataclasses import dataclass
-
-import gym
-import numpy as np
 import pygame
-from pygame.locals import *
-from state import State
+from grid_env import GridEnv
 
 BLUE = (0, 0, 255)
 BLACK = (0, 0, 0)
@@ -17,68 +10,6 @@ GREY = (100, 100, 100)
 
 
 actions = {"left": 0, "up": 1, "right": 2, "down": 3}
-
-
-@dataclass
-class GridCell:
-    pos_x: int
-    pos_y: int
-
-
-class GridEnv(gym.Env):
-    def __init__(self):
-        super().__init__()
-        self.state = State()
-        self.time = 0
-        self.end_time = 20
-
-    def reset(self):
-        self.state.reset()
-        self.time = 0
-
-    def apply_action(self, action):
-        if action == 1:
-            self.state.move(dy=-1)
-        elif action == 2:
-            self.state.move(dx=-1)
-        elif action == 3:
-            self.state.move(dy=+1)
-        elif action == 4:
-            self.state.move(dx=+1)
-        elif action == 0:
-            pass
-        else:
-            raise ValueError("Unknown action {}".format(action))
-
-    def get_obs(self):
-        x, y = self.state.get_player_pos()
-        obs = 10 * x + y
-        return obs
-
-    def step(self, action):
-        self.apply_action(action)
-        reward = self.compute_reward()
-        obs = self.get_obs()
-        self.time += 1
-
-        return obs, reward, done, {}
-
-    def compute_reward(self):
-        x, y = self.state.get_player_pos()
-        cell_value = self.state.get_state(x, y)
-        reward = 0
-
-        if cell_value == 2:
-            reward -= 10
-        elif cell_value == 3:
-            reward += 50
-        else:
-            reward -= 1
-
-        return reward
-
-    def get_state(self):
-        return self.state
 
 
 class GridWorld:
@@ -92,7 +23,10 @@ class GridWorld:
         self.player_size = 10
 
         self.env = GridEnv()
+        from QAgent import QAgent
+
         state = self.env.get_state()
+        self.agent = QAgent(self.env.observation_space.n, self.env.action_space.n)
 
         self.margins = (
             self.screen_size[0] // (state.shape[0] + 1),
@@ -116,18 +50,20 @@ class GridWorld:
     def draw_q_labels(self, x, y, width, q_values, height=None):
         height = height or width
         offset = 5
+
+        half = width // 2
+        small = width // offset
+        big = (offset - 1) * width // offset
+
         xy_pos = [
-            [
-                x + width // 2,
-                y + width // offset,
-            ],
-            [x + width // 2, y + (offset - 1) * width // offset],
-            [x + width // offset, y + width // 2],
-            [x + (offset - 1) * width // offset, y + width // 2],
+            [x + small, y + half],  # left
+            [x + half, y + small],  # up
+            [x + big, y + half],  # right
+            [x + half, y + big],  # down
         ]
 
         for (x, y), q_value in zip(xy_pos, q_values):
-            self.draw_text(x, y, text=str(q_value))
+            self.draw_text(x, y, text="{:.3f}".format(q_value))
 
     def draw_grid(self):
         cell_width = self.margins[0]
@@ -149,7 +85,10 @@ class GridWorld:
                     rect = pygame.Rect(posx, posy, cell_width, cell_width)
                     pygame.draw.rect(self.screen, BLACK, rect, 1)
                     self.draw_q_labels(
-                        posx, posy, width=self.margins[0], q_values=[0.1, 0.2, 0.3, 0.5]
+                        posx,
+                        posy,
+                        width=self.margins[0],
+                        q_values=self.agent.q_table[10 * y + x, 1:].tolist(),
                     )
 
     def draw_text(self, x, y, text="", rotate_degrees=None):
@@ -184,20 +123,31 @@ class GridWorld:
                 if event.key == pygame.K_DOWN:
                     action = 4
                 if event.key == pygame.K_SPACE:
-                    action = 0
+                    action = -3
                 if event.key == pygame.K_r:
                     action = -2
+                if event.key == pygame.K_t:
+                    action = -4
         return action
 
     def step(self, action=None):
         # pygame.time.delay(100)
+        done = False
         if action is None:
             action = self.get_action_from_input()
 
+        old_obs = self.env.get_obs()
         if action == -2:
             self.reset()
+        if action == -3:
+            action = self.agent.compute_action(self.env.get_obs())
+        if action == -4:
+            self.agent.reset()
         if action >= 0:
             obs, reward, done, info = self.env.step(action)
+            self.agent.update(
+                state=old_obs, action=action, next_state=obs, reward=reward
+            )
             print(
                 "Time:",
                 self.env.time,
@@ -209,12 +159,17 @@ class GridWorld:
                 reward,
             )
             self.score += reward
+
         self.draw_game()
+        return done
 
 
 env = GridWorld()
 env.reset()
 done = False
-score = 0
 while not done:
-    env.step()
+    done = env.step()
+    print(env.agent.q_table)
+    if done:
+        env.reset()
+        done = False
