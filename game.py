@@ -8,8 +8,26 @@ RED = (255, 0, 0)
 WHITE = (255, 255, 255)
 GREY = (100, 100, 100)
 
+GAMMA_STEP = 0.01
+EPSILON_STEP = 0.05
+ALPHA_STEP = 0.01
 
-actions = {"left": 0, "up": 1, "right": 2, "down": 3}
+TOGGLE_LEARNING = "toggle_learning"
+RESET_PLAYER = "reset_player"
+RESET_AGENT = "reset_agent"
+GAMMA_DOWN = "gamma_down"
+GAMMA_UP = "gamma_up"
+EPSILON_DOWN = "epsilon_down"
+EPSILON_UP = "epsilon_up"
+ALPHA_DOWN = "alpha_down"
+ALPHA_UP = "alpha_up"
+DO_STEP = "do_step"
+
+NOOP = 0
+LEFT = 1
+UP = 2
+RIGHT = 3
+DOWN = 4
 
 
 class GridWorld:
@@ -34,6 +52,7 @@ class GridWorld:
         )
 
         self.score = 0
+        self.auto_learn = False
 
     def reset(self):
         self.score = 0
@@ -91,85 +110,162 @@ class GridWorld:
                         q_values=self.agent.q_table[10 * y + x, 1:].tolist(),
                     )
 
-    def draw_text(self, x, y, text="", rotate_degrees=None):
+    def draw_agent_params(self):
+        epsilon = self.agent.epsilon
+        gamma = self.agent.gamma
+        alpha = self.agent.alpha
+        self.draw_text(
+            50,
+            40,
+            pos="topleft",
+            text="Epsilon {:.2f}, Gamma {:.2f}, Alpha {:.2f}".format(
+                epsilon, gamma, alpha
+            ),
+        )
+
+    def draw_text(self, x, y, pos="center", text="", rotate_degrees=None):
         font = pygame.font.Font("freesansbold.ttf", 16)
         text = font.render(text, True, GREEN, BLUE)
         textRect = text.get_rect()
         if rotate_degrees:
             pygame.transform.rotate(text, rotate_degrees)
 
-        textRect.center = (x, y)
+        if pos == "center":
+            textRect.center = (x, y)
+        if pos == "topleft":
+            textRect.topleft = (x, y)
         self.screen.blit(text, textRect)
 
     def draw_game(self):
         self.screen.fill((255, 255, 255))
         self.draw_grid()
         self.draw_player()
+        self.draw_agent_params()
         pygame.display.update()
 
     def get_action_from_input(self):
-        action = -1
+        return_event = None
+        action = None
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.display.quit()
                 pygame.quit()
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_LEFT:
-                    action = 1
+                    action = LEFT
                 if event.key == pygame.K_UP:
-                    action = 2
+                    action = UP
                 if event.key == pygame.K_RIGHT:
-                    action = 3
+                    action = RIGHT
                 if event.key == pygame.K_DOWN:
-                    action = 4
+                    action = DOWN
+                if event.key == pygame.K_n:
+                    action = NOOP
+
+                if event.key == pygame.K_z:
+                    return_event = DO_STEP
+
                 if event.key == pygame.K_SPACE:
-                    action = -3
+                    return_event = TOGGLE_LEARNING
+
                 if event.key == pygame.K_r:
-                    action = -2
+                    return_event = RESET_PLAYER
+
                 if event.key == pygame.K_t:
-                    action = -4
-        return action
+                    return_event = RESET_AGENT
 
-    def step(self, action=None):
-        # pygame.time.delay(100)
+                if event.key == pygame.K_q:
+                    return_event = EPSILON_UP
+                if event.key == pygame.K_a:
+                    return_event = EPSILON_DOWN
+
+                if event.key == pygame.K_w:
+                    return_event = GAMMA_UP
+                if event.key == pygame.K_s:
+                    return_event = GAMMA_DOWN
+
+                if event.key == pygame.K_e:
+                    return_event = ALPHA_UP
+                if event.key == pygame.K_d:
+                    return_event = ALPHA_DOWN
+        return return_event, action
+
+    def step(self):
         done = False
-        if action is None:
-            action = self.get_action_from_input()
 
-        old_obs = self.env.get_obs()
-        if action == -2:
-            self.reset()
-        if action == -3:
-            action = self.agent.compute_action(self.env.get_obs())
-        if action == -4:
-            self.agent.reset()
-        if action >= 0:
-            obs, reward, done, info = self.env.step(action)
-            self.agent.update(
-                state=old_obs, action=action, next_state=obs, reward=reward
-            )
-            print(
-                "Time:",
-                self.env.time,
-                "Score:",
-                self.score,
-                "Obs:",
-                obs,
-                "reward: ",
-                reward,
-            )
-            self.score += reward
+        while not done:
+            # pygame.time.delay(100)
+            done = False
 
-        self.draw_game()
+            event, action = self.get_action_from_input()
+            obs = self.env.get_obs()
+            if event == TOGGLE_LEARNING:
+                self.auto_learn = not self.auto_learn
+
+            if self.auto_learn:
+                action = self.agent.compute_action(obs)
+                next_obs, reward, done, info = self.env.step(action)
+                self.agent.update(
+                    obs=obs,
+                    action=action,
+                    next_obs=next_obs,
+                    reward=reward,
+                    done=done,
+                )
+            else:
+                if event:
+                    if event == RESET_PLAYER:
+                        self.reset()
+                    if event == RESET_AGENT:
+                        self.agent.reset()
+
+                    if event == EPSILON_UP:
+                        self.agent.epsilon += EPSILON_STEP
+                    if event == EPSILON_DOWN:
+                        self.agent.epsilon -= EPSILON_STEP
+
+                    if event == GAMMA_UP:
+                        self.agent.gamma += GAMMA_STEP
+                    if event == GAMMA_DOWN:
+                        self.agent.gamma -= GAMMA_STEP
+
+                    if event == ALPHA_UP:
+                        self.agent.alpha += ALPHA_STEP
+                    if event == ALPHA_DOWN:
+                        self.agent.alpha -= ALPHA_STEP
+
+                    if action == DO_STEP:
+                        action = self.agent.compute_action(obs)
+                if action:
+                    if action >= 0:
+                        next_obs, reward, done, info = self.env.step(action)
+                        self.agent.update(
+                            obs=obs,
+                            action=action,
+                            next_obs=next_obs,
+                            reward=reward,
+                            done=done,
+                        )
+                        print(
+                            "Time:",
+                            self.env.time,
+                            "Score:",
+                            self.score,
+                            "Obs:",
+                            next_obs,
+                            "reward: ",
+                            reward,
+                        )
+                        self.score += reward
+
+            self.draw_game()
+            if done:
+                env.reset()
+                done = False
         return done
 
 
 env = GridWorld()
 env.reset()
-done = False
-while not done:
-    done = env.step()
-    print(env.agent.q_table)
-    if done:
-        env.reset()
-        done = False
+done = env.step()
+# print(env.agent.q_table)

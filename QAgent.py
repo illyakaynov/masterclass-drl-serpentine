@@ -7,7 +7,7 @@ all_penalties = []
 
 class QAgent:
     def __init__(
-        self, n_states, n_actions, epsilon=0.1, alpha=0.1, gamma=0.9, learn=True
+        self, n_states, n_actions, epsilon=0.2, alpha=0.1, gamma=0.9, learn=True
     ):
         self.epsilon = epsilon
         self.alpha = alpha
@@ -32,13 +32,13 @@ class QAgent:
             action = np.argmax(self.q_table[obs, :])
         return action
 
-    def update(self, state, action, next_state, reward):
+    def update(self, obs, action, next_obs, reward, done):
         if self.learn:
-            old_q = self.q_table[state, action]
+            old_q = self.q_table[obs, action]
             td_update = (
-                self.gamma * np.max(self.q_table[next_state, :])
-                - self.q_table[state, action]
+                self.gamma * np.max(self.q_table[next_obs, :])
+                - self.q_table[obs, action]
             )
-            self.q_table[state, action] = old_q + self.alpha * (reward + td_update)
+            self.q_table[obs, action] = old_q + self.alpha * (reward + td_update)
             self.sum_rewards += reward
 

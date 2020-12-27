@@ -61,7 +61,7 @@ class GridEnv(gym.Env):
         elif cell_value == 3:
             reward += 50
         else:
-            reward -= 1
+            reward -= 0.1
 
         return reward
 
