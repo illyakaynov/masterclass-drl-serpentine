@@ -7,6 +7,10 @@ from memory.sample_batch import SampleBatch, discount_cumsum
 from tensorboardX import SummaryWriter
 from tensorflow.keras import layers, models, optimizers
 
+logdir = 'test1'
+writer = tf.summary.create_file_writer(logdir + "/metrics")
+writer.set_as_default()
+
 default_config = dict(
     explore=True,
     obs_shape=(8,),
@@ -16,15 +20,15 @@ default_config = dict(
     gamma=0.95,
     num_sgd_iter=20,
     num_epochs=20,
-    sgd_minibatch_size=8,
-    train_batch_size=64,
+    sgd_minibatch_size=32,
+    train_batch_size=128,
     num_dim_critic=(64, 64),
     act_f_critic="relu",
     num_dim_actor=(64, 64),
     act_f_actor="tanh",
     vf_share_layers=False,
     entropy_coeff=1e-5,
-    lr_actor=5e-4,
+    lr_actor=5e-3,
     lr_critic=5e-4,
 )
 
@@ -62,7 +66,7 @@ class PPOAgent:
         self.clip_value = config["clip_value"]
         self.entropy_coeff = config["entropy_coeff"]
         self.sgd_iters = 0
-        self.writer = SummaryWriter("test")
+        self.total_epochs = 0
 
     def _compute_action_discrete(self, obs):
         p = self.actor.predict(
@@ -153,6 +157,7 @@ class PPOAgent:
             values = train_batch[SampleBatch.REWARDS]
 
             pred_values = self.critic.predict(obs)
+            # pred_values = 0
             advantage = values - pred_values
 
             dataset = (
@@ -160,7 +165,7 @@ class PPOAgent:
                     (obs, advantage, action_prob, action)
                 )
                 .batch(self.sgd_minibatch_size)
-                .shuffle(1)
+
             )
             for obs_batch, advantage_batch, action_prob_batch, action_batch in dataset:
                 batch_loss = []
@@ -184,9 +189,15 @@ class PPOAgent:
                     )
                     batch_loss.append(loss.numpy())
 
+
                 actor_history.history["loss"].append(np.mean(batch_loss))
-                gradient = tape.gradient(loss, self.actor.trainable_weights)
+                gradient = tape.gradient(loss, self.actor.trainable_variables)
+                for i in range(len(gradient)):
+                    tf.summary.histogram(f'actor_gradient_{i}', gradient[i], step=self.total_epochs)
+                for i in range(len(self.actor.trainable_variables)):
+                    tf.summary.histogram(f'actor_weights_{i}', self.actor.trainable_variables[i], step=self.total_epochs)
                 optimizer.apply_gradients(zip(gradient, self.actor.trainable_variables))
+                self.total_epochs += 1
             # self.writer.add_scalar(
             #     "action_0_prob", actor_history.history["loss"][-1], self.sgd_iters
             # )
@@ -204,13 +215,13 @@ class PPOAgent:
                 [values],
                 batch_size=self.sgd_minibatch_size,
                 shuffle=True,
-                epochs=self.num_epochs,
+                epochs=1,
                 verbose=0,
             )
-            self.writer.add_scalar(
+            tf.summary.scalar(
                 "Actor loss", actor_history.history["loss"][-1], self.sgd_iters
             )
-            self.writer.add_scalar(
+            tf.summary.scalar(
                 "Critic loss", critic_history.history["loss"][-1], self.sgd_iters
             )
             print(
