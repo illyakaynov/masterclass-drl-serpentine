@@ -1,5 +1,5 @@
 import pygame
-from grid_env import GridEnv
+from grid_env import GridEnv, TRAP_REWARD, GOAL_REWARD, TIMESTEP_REWARD
 
 BLUE = (0, 0, 255)
 BLACK = (0, 0, 0)
@@ -10,7 +10,7 @@ GREY = (100, 100, 100)
 
 GAMMA_STEP = 0.01
 EPSILON_STEP = 0.05
-ALPHA_STEP = 0.01
+ALPHA_STEP = 0.05
 
 TOGGLE_LEARNING = "toggle_learning"
 RESET_PLAYER = "reset_player"
@@ -81,8 +81,12 @@ class GridWorld:
             [x + half, y + big],  # down
         ]
 
+        max_q_value = max(q_values)
         for (x, y), q_value in zip(xy_pos, q_values):
-            self.draw_text(x, y, text="{:.3f}".format(q_value))
+            if max_q_value == q_value:
+                self.draw_text(x, y, text="{:.3f}".format(q_value), color_text=RED)
+            else:
+                self.draw_text(x, y, text="{:.3f}".format(q_value))
 
     def draw_grid(self):
         cell_width = self.margins[0]
@@ -97,9 +101,12 @@ class GridWorld:
                 elif state.get_state_transpose(x, y) == 2:
                     rect = pygame.Rect(posx, posy, cell_width, cell_width)
                     pygame.draw.rect(self.screen, RED, rect, 0)
+                    self.draw_text(posx + cell_width//2, posy + cell_width//2, text=str(TRAP_REWARD))
+
                 elif state.get_state_transpose(x, y) == 3:
                     rect = pygame.Rect(posx, posy, cell_width, cell_width)
                     pygame.draw.rect(self.screen, GREEN, rect, 0)
+                    self.draw_text(posx + cell_width//2, posy + cell_width//2, text=str(GOAL_REWARD))
                 else:
                     rect = pygame.Rect(posx, posy, cell_width, cell_width)
                     pygame.draw.rect(self.screen, BLACK, rect, 1)
@@ -123,9 +130,14 @@ class GridWorld:
             ),
         )
 
-    def draw_text(self, x, y, pos="center", text="", rotate_degrees=None):
+    def draw_text(self, x, y,
+                  pos="center",
+                  text="",
+                  rotate_degrees=None,
+                  color_text=BLACK,
+                  color_background=WHITE):
         font = pygame.font.Font("freesansbold.ttf", 16)
-        text = font.render(text, True, GREEN, BLUE)
+        text = font.render(text, True, color_text, color_background)
         textRect = text.get_rect()
         if rotate_degrees:
             pygame.transform.rotate(text, rotate_degrees)

@@ -3,6 +3,10 @@ from gym import spaces
 
 from state import State
 
+TRAP_REWARD = -10
+GOAL_REWARD = 50
+TIMESTEP_REWARD = -0.1
+
 class GridEnv(gym.Env):
     def __init__(self):
         super().__init__()
@@ -57,11 +61,11 @@ class GridEnv(gym.Env):
         reward = 0
 
         if cell_value == 2:
-            reward -= 10
+            reward += TRAP_REWARD
         elif cell_value == 3:
-            reward += 50
+            reward += GOAL_REWARD
         else:
-            reward -= 0.1
+            reward += TIMESTEP_REWARD
 
         return reward
 
