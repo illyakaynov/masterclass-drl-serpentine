@@ -196,6 +196,11 @@ class PPOAgent:
                     tf.summary.histogram(f'actor_gradient_{i}', gradient[i], step=self.total_epochs)
                 for i in range(len(self.actor.trainable_variables)):
                     tf.summary.histogram(f'actor_weights_{i}', self.actor.trainable_variables[i], step=self.total_epochs)
+
+                if True:
+                    gradient, global_norm = tf.clip_by_global_norm(
+                        gradient, 10.0
+                    )
                 optimizer.apply_gradients(zip(gradient, self.actor.trainable_variables))
                 self.total_epochs += 1
             # self.writer.add_scalar(
@@ -254,7 +259,7 @@ def build_critic_network(
     out_value = layers.Dense(1, name="output")(x)
 
     model = models.Model(inputs=state_input, outputs=out_value, name="critic")
-    model.compile(optimizer=optimizers.Adam(lr=lr), loss=loss)
+    model.compile(optimizer=optimizers.Adam(lr=lr, clipnorm=10.0, ), loss=loss)
     return model
 
 

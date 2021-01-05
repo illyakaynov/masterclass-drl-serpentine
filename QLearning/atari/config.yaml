@@ -1,0 +1,43 @@
+gamma: 0.99
+training_start: 100
+training_interval: 4
+batch_size: 32
+priority_replay: False
+
+exploration_config:
+    epsilon_init: 1.0
+    epsilon_min: 0.02
+    epsilon_decay: 0.99
+
+replay_buffer_config:
+    replay_capacity: 10000
+    add_last_samples: 3
+    gamma: 0.99
+
+network_config:
+    double_q: False
+    copy_steps: 50
+    dueling_architecture: False
+    noisy: False
+    gradient_clipping: False
+    gradient_clipping_norm: 10.0
+    learning_rate: 0.001
+    gamma: 0.99
+    loss: 'mse'
+    optimizer: 'adam'
+
+    use_cnn :  True
+
+    mlp_n_hidden: [32, 32]
+    mlp_act_f: 'relu'
+    mlp_initializer: 'glorot_normal'
+    mlp_value_n_hidden: 64
+    mlp_value_act_f: 'tanh'
+
+    cnn_number_of_maps: [32, 64, 64]
+    cnn_kernel_size: [8, 4, 3]
+    cnn_kernel_stride: [4, 2, 1]
+    cnn_padding: 'VALID'
+    cnn_activation: 'elu'
+    cnn_initializer: 'he_normal'
+    cnn_bias_initializer: 'zeros'

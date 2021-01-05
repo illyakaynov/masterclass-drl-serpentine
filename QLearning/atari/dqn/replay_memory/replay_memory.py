@@ -9,7 +9,6 @@ ReplayElement = (
 class CircularBufferReplayMemory:
     def __init__(self,
                  observation_shape,
-                 stack_size=1,
                  replay_capacity=1000,
                  batch_size=32,
                  add_last_samples=3,
@@ -26,8 +25,6 @@ class CircularBufferReplayMemory:
         self._reward_shape = reward_shape
         self._reward_dtype = reward_dtype
         self._observation_shape = observation_shape
-        self._stack_size = stack_size
-        self._state_shape = self._observation_shape + (self._stack_size,)
         self._replay_capacity = replay_capacity
         self._batch_size = batch_size
         self._gamma = gamma
@@ -102,11 +99,10 @@ from dqn.replay_memory.sum_tree import SumTree
 class PrioritisedCircularBufferReplayMemory(CircularBufferReplayMemory):
     def __init__(self,
                  observation_shape,
-                 stack_size=1,
                  replay_capacity=1000,
                  batch_size=32,
                  gamma=0.99,
-                 max_sample_attempts=1000,
+                 add_last_samples=3,
                  observation_dtype=np.uint8,
                  teminal_shape=(),
                  terminal_dtype=np.uint8,
@@ -121,10 +117,10 @@ class PrioritisedCircularBufferReplayMemory(CircularBufferReplayMemory):
                  is_stratified_sampling=True,
                  uniform_priorities=False):
         super().__init__(observation_shape=observation_shape,
-                         stack_size=stack_size,
                          replay_capacity=replay_capacity,
                          batch_size=batch_size,
                          gamma=gamma,
+                         add_last_samples=add_last_samples,
                          observation_dtype=observation_dtype,
                          teminal_shape=teminal_shape,
                          terminal_dtype=terminal_dtype,
@@ -141,25 +137,16 @@ class PrioritisedCircularBufferReplayMemory(CircularBufferReplayMemory):
 
         self.sum_tree = SumTree(replay_capacity)
 
-    def _get_storage_signature(self):
-        """The signature of the add function.
-
-        The signature is the same as the one for OutOfGraphReplayBuffer, with an
-        added priority.
-
-        Returns:
-          list of ReplayElements defining the type of the argument signature needed
-            by the add function.
-        """
-        parent_add_signature = super()._get_storage_signature()
-        add_signature = parent_add_signature + [
-            ReplayElement('priority', (1,), np.float32)
-        ]
-        return add_signature
-
     def insert(self, transition):
         priority = np.expand_dims(np.array(self.sum_tree.max_recorded_priority), 0)
-        super().insert(transition + priority)
+        self.sum_tree.set(self.cursor(), priority)
+
+        storage_signature = self._get_storage_signature() + [
+            ReplayElement('priority', (1,), np.float32)
+        ]
+        for transition_elem, storage_elem in zip(transition, storage_signature):
+            self.store[storage_elem.name][self.cursor()] = transition_elem
+        self.add_count += 1
 
     def _sample_idxs(self, batch_size):
         indices = np.asarray(self.sum_tree.stratified_sample(batch_size))
@@ -190,18 +177,20 @@ class PrioritisedCircularBufferReplayMemory(CircularBufferReplayMemory):
         if idxs is None:
             idxs = self._sample_idxs(self._batch_size)
 
+        priorities = self.get_priority(idxs)
+        priorities = np.power(priorities, self.alpha) / np.sum(np.power(self.sum_tree.nodes[-1], self.alpha),
+                                                               keepdims=False)
+        loss_weights = np.power(priorities + 1e-10, -self.beta)
+        loss_weights = loss_weights / np.max(loss_weights, keepdims=False)
+
         transition_elems = []
-        for elem in self._get_storage_signature():
-
-            if elem.name == 'priority':
-                priorities = self.get_priority(idxs)
-                transition_elems.append(priorities)
-                continue
-
+        storage_signature = self._get_storage_signature()
+        for elem in storage_signature:
             elem_tensor = self.store[elem.name][idxs]
             transition_elems.append(elem_tensor)
 
         transition_elems.append(idxs)
+        transition_elems.append(loss_weights)
         return transition_elems
 
     def update_priorities(self, indices, priorities):
