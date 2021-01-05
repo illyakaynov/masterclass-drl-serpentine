@@ -37,7 +37,7 @@ class QAgent:
         if replay_buffer_params is None:
             replay_buffer_params = {}
 
-        if self.priority_replay:
+        if not self.priority_replay:
             self.replay_memory = CircularBufferReplayMemory(self.observation_shape,
                                                             batch_size=batch_size,
                                                             **replay_buffer_params)
@@ -69,7 +69,7 @@ class QAgent:
             is_terminal))
 
         if self.training_start < self.replay_memory.add_count:
-            if self.steps % self.training_interval == 0:
+            if self.steps % self.training_interval == 0 and self.steps != 0:
                 sample_batch = self.replay_memory.sample_memories()
                 self.q_network.train_online(sample_batch)
 

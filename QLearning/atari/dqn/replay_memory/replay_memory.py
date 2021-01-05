@@ -102,12 +102,11 @@ from dqn.replay_memory.sum_tree import SumTree
 class PrioritisedCircularBufferReplayMemory(CircularBufferReplayMemory):
     def __init__(self,
                  observation_shape,
-                 stack_size,
-                 replay_capacity,
-                 batch_size,
+                 stack_size=1,
+                 replay_capacity=1000,
+                 batch_size=32,
                  gamma=0.99,
                  max_sample_attempts=1000,
-                 extra_storage_types=None,
                  observation_dtype=np.uint8,
                  teminal_shape=(),
                  terminal_dtype=np.uint8,
@@ -121,20 +120,18 @@ class PrioritisedCircularBufferReplayMemory(CircularBufferReplayMemory):
                  beta_max=1.,
                  is_stratified_sampling=True,
                  uniform_priorities=False):
-        super().__init__(observation_shape,
-                         stack_size,
-                         replay_capacity,
-                         batch_size,
-                         gamma,
-                         max_sample_attempts,
-                         extra_storage_types,
-                         observation_dtype,
-                         teminal_shape,
-                         terminal_dtype,
-                         action_shape,
-                         action_dtype,
-                         reward_shape,
-                         reward_dtype)
+        super().__init__(observation_shape=observation_shape,
+                         stack_size=stack_size,
+                         replay_capacity=replay_capacity,
+                         batch_size=batch_size,
+                         gamma=gamma,
+                         observation_dtype=observation_dtype,
+                         teminal_shape=teminal_shape,
+                         terminal_dtype=terminal_dtype,
+                         action_shape=action_shape,
+                         action_dtype=action_dtype,
+                         reward_shape=reward_shape,
+                         reward_dtype=reward_dtype)
         self.alpha = alpha
         self.beta = beta
         self.is_stratified_sampling = is_stratified_sampling
