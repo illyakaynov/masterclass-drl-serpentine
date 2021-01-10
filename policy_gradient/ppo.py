@@ -7,7 +7,12 @@ from memory.sample_batch import SampleBatch, discount_cumsum
 from tensorboardX import SummaryWriter
 from tensorflow.keras import layers, models, optimizers
 
-logdir = 'test1'
+import tensorflow.keras.backend as K
+
+from collections import defaultdict
+
+
+logdir = "test1"
 writer = tf.summary.create_file_writer(logdir + "/metrics")
 writer.set_as_default()
 
@@ -17,19 +22,20 @@ default_config = dict(
     num_actions=2,
     continuous=False,
     clip_value=0.2,
-    gamma=0.95,
-    num_sgd_iter=20,
+    gamma=0.99,
+    num_sgd_iter=6,
     num_epochs=20,
-    sgd_minibatch_size=32,
-    train_batch_size=128,
+    sgd_minibatch_size=128,
+    train_batch_size=4000,
     num_dim_critic=(64, 64),
-    act_f_critic="relu",
+    act_f_critic="tanh",
     num_dim_actor=(64, 64),
     act_f_actor="tanh",
     vf_share_layers=False,
     entropy_coeff=1e-5,
-    lr_actor=5e-3,
-    lr_critic=5e-4,
+    lr_actor=0.0003,
+    lr_critic=0.0003,
+    clip_gradients_by_norm=None,
 )
 
 
@@ -40,14 +46,12 @@ class PPOAgent:
         self.actor = build_actor_network(
             obs_shape=config["obs_shape"],
             num_actions=config["num_actions"],
-            lr=config["lr_actor"],
             num_dim=config["num_dim_actor"],
             act_f=config["act_f_actor"],
         )
 
         self.critic = build_critic_network(
             obs_shape=config["obs_shape"],
-            lr=config["lr_critic"],
             num_dim=config["num_dim_critic"],
             act_f=config["act_f_critic"],
         )
@@ -65,21 +69,23 @@ class PPOAgent:
         self.lr_critic = config["lr_critic"]
         self.clip_value = config["clip_value"]
         self.entropy_coeff = config["entropy_coeff"]
+
         self.sgd_iters = 0
         self.total_epochs = 0
 
+        self.clip_gradients_by_norm = config["clip_gradients_by_norm"]
+
+        self.actor_optimizer = optimizers.Adam(self.lr_actor)
+        self.critic_optimizer = optimizers.Adam(self.lr_critic)
+
     def _compute_action_discrete(self, obs):
-        p = self.actor.predict(
-            # [
-            obs[None, :]
-            # , np.zeros((1, 1)), np.zeros((1, self.num_actions))]
-        )
+        p = self.actor.predict(obs[None, :])
         if self.explore:
             action = np.random.choice(self.num_actions, p=np.nan_to_num(p[0]))
         else:
             action = np.argmax(p[0])
-        action_matrix = np.zeros(self.num_actions, dtype=np.float64)
-        action_matrix[action] = 1
+        action_matrix = np.zeros(self.num_actions, dtype=np.float32)
+        action_matrix[action] = 1.0
         return action, action_matrix, p
 
     def compute_action(self, obs):
@@ -117,9 +123,10 @@ class PPOAgent:
             probs.append(prob)
             eps_ids.append(episode_id)
             episode_rewards.append(reward)
+            obs = next_obs
             if done:
                 # episode_rewards[-1] = 0
-                print(score)
+                # print(score)
                 score = 0
                 obs = env.reset()
                 episode_id += 1
@@ -141,101 +148,105 @@ class PPOAgent:
         )
 
     def run(self):
-        optimizer = optimizers.Adam(self.lr_actor)
 
-        class A:
-            ...
-
-        actor_history = A()
-        actor_history.history = {"loss": []}
+        history = defaultdict(list)
 
         while self.sgd_iters < self.num_sgd_iter:
+            epoch_actor_loss = []
+            epoch_critic_loss = []
+
             train_batch = self.get_batch()
             obs = train_batch[SampleBatch.OBS]
             action = train_batch[SampleBatch.ACTIONS]
             action_prob = train_batch[SampleBatch.ACTION_PROB]
-            values = train_batch[SampleBatch.REWARDS]
+            values = train_batch[SampleBatch.REWARDS].astype("float32")
 
-            pred_values = self.critic.predict(obs)
             # pred_values = 0
-            advantage = values - pred_values
 
-            dataset = (
-                tf.data.Dataset.from_tensor_slices(
-                    (obs, advantage, action_prob, action)
+            dataset = tf.data.Dataset.from_tensor_slices(
+                (obs, values, action_prob, action)
+            ).batch(self.sgd_minibatch_size).shuffle(1)
+            for obs_batch, values_batch, action_prob_batch, action_batch in dataset:
+
+                with tf.GradientTape() as tape:
+                    pred_values = self.critic(obs_batch)
+                    advantage_batch = values_batch - pred_values
+                    critic_loss = K.mean(K.square(advantage_batch)) * 0.01
+
+                critic_gradients = tape.gradient(
+                    critic_loss, self.critic.trainable_variables
                 )
-                .batch(self.sgd_minibatch_size)
+                if self.clip_gradients_by_norm:
+                    critic_gradients, global_norm = tf.clip_by_global_norm(
+                        critic_gradients, self.clip_gradients_by_norm
+                    )
+                self.critic_optimizer.apply_gradients(zip(critic_gradients, self.critic.trainable_variables))
+                epoch_critic_loss.append(critic_loss)
 
-            )
-            for obs_batch, advantage_batch, action_prob_batch, action_batch in dataset:
-                batch_loss = []
                 with tf.GradientTape() as tape:
                     y_pred = self.actor(obs_batch)
                     y_true = action_batch
 
-                    prob = tf.reduce_sum(y_true * y_pred, axis=-1)
-                    old_prob = tf.reduce_sum(y_true * action_prob_batch, axis=-1)
+                    prob = tf.reduce_sum(y_true * y_pred, axis=-1, keepdims=True)
+                    old_prob = tf.reduce_sum(y_true * action_prob_batch, axis=-1, keepdims=True)
                     prob_ratio = prob / (old_prob + 1e-10)
                     surrogate = prob_ratio * advantage_batch
                     surrogate_cliped = (
-                        tf.clip_by_value(
-                            prob_ratio, 1 - self.clip_value, 1 + self.clip_value
-                        )
+                        K.clip(prob_ratio, 1 - self.clip_value, 1 + self.clip_value)
                         * advantage_batch
                     )
-                    loss = -tf.reduce_mean(
+                    actor_loss = -tf.reduce_mean(
                         tf.minimum(surrogate, surrogate_cliped)
-                        + self.entropy_coeff * -(prob * tf.math.log(prob + 1e-10))
+                        # + self.entropy_coeff * -(prob * tf.math.log(prob + 1e-10))
                     )
-                    batch_loss.append(loss.numpy())
+                    entropy = -(prob * tf.math.log(prob + 1e-10))
+                    epoch_actor_loss.append(actor_loss.numpy())
 
+                actor_gradients = tape.gradient(
+                    actor_loss, self.actor.trainable_variables
+                )
+                if self.clip_gradients_by_norm:
+                    actor_gradients, global_norm = tf.clip_by_global_norm(
+                        actor_gradients, self.clip_gradients_by_norm
+                    )
+                self.actor_optimizer.apply_gradients(
+                    zip(actor_gradients, self.actor.trainable_variables)
+                )
 
-                actor_history.history["loss"].append(np.mean(batch_loss))
-                gradient = tape.gradient(loss, self.actor.trainable_variables)
-                for i in range(len(gradient)):
-                    tf.summary.histogram(f'actor_gradient_{i}', gradient[i], step=self.total_epochs)
+                for i in range(len(actor_gradients)):
+                    tf.summary.histogram(
+                        f"actor_gradient_{i}",
+                        actor_gradients[i],
+                        step=self.total_epochs,
+                    )
                 for i in range(len(self.actor.trainable_variables)):
-                    tf.summary.histogram(f'actor_weights_{i}', self.actor.trainable_variables[i], step=self.total_epochs)
-
-                if True:
-                    gradient, global_norm = tf.clip_by_global_norm(
-                        gradient, 10.0
+                    tf.summary.histogram(
+                        f"actor_weights_{i}",
+                        self.actor.trainable_variables[i],
+                        step=self.total_epochs,
                     )
-                optimizer.apply_gradients(zip(gradient, self.actor.trainable_variables))
-                self.total_epochs += 1
-            # self.writer.add_scalar(
-            #     "action_0_prob", actor_history.history["loss"][-1], self.sgd_iters
-            # )
+                tf.summary.scalar('entropy', tf.reduce_mean(entropy), step=self.total_epochs)
+                for i in range(len(prob)):
+                    tf.summary.scalar(f'action_prob_{i}', tf.reduce_mean(prob[i]), step=self.total_epochs)
 
-            # actor_history = self.actor.fit(
-            #     [obs, advantage, action_prob],
-            #     [action],
-            #     batch_size=self.sgd_minibatch_size,
-            #     shuffle=True,
-            #     epochs=self.num_epochs,
-            #     verbose=0,
-            # )
-            critic_history = self.critic.fit(
-                [obs],
-                [values],
-                batch_size=self.sgd_minibatch_size,
-                shuffle=True,
-                epochs=1,
-                verbose=0,
-            )
-            tf.summary.scalar(
-                "Actor loss", actor_history.history["loss"][-1], self.sgd_iters
-            )
-            tf.summary.scalar(
-                "Critic loss", critic_history.history["loss"][-1], self.sgd_iters
-            )
+                self.total_epochs += 1
+
+            history["actor_loss"].append(np.mean(epoch_actor_loss))
+            history["critic_loss"].append(np.mean(epoch_critic_loss))
+
+            tf.summary.scalar("Actor loss", history["actor_loss"][-1], self.sgd_iters)
+            tf.summary.scalar("Critic loss", history["critic_loss"][-1], self.sgd_iters)
             print(
                 self.sgd_iters,
-                actor_history.history["loss"][-1],
-                critic_history.history["loss"][-1],
+                history["actor_loss"][-1],
+                history["critic_loss"][-1],
             )
             self.sgd_iters += 1
-            print(self.run_episode())
+            val_score = np.mean([self.run_episode() for i in range(5)])
+            history["score"].append(val_score)
+            print(val_score)
+
+        return history
 
     def run_episode(self):
         done = False
@@ -249,9 +260,9 @@ class PPOAgent:
 
 
 def build_critic_network(
-    obs_shape, loss="mse", lr=0.01, num_dim=(64, 64), act_f="tanh"
+    obs_shape, num_dim=(64, 64), act_f="tanh"
 ):
-    state_input = layers.Input(shape=obs_shape)
+    state_input = layers.Input(shape=obs_shape, dtype=tf.float32)
     x = state_input
     for i, dim in enumerate(num_dim):
         x = layers.Dense(dim, activation=act_f, name=f"hidden_{i}")(x)
@@ -259,16 +270,14 @@ def build_critic_network(
     out_value = layers.Dense(1, name="output")(x)
 
     model = models.Model(inputs=state_input, outputs=out_value, name="critic")
-    model.compile(optimizer=optimizers.Adam(lr=lr, clipnorm=10.0, ), loss=loss)
+    model.summary()
     return model
 
 
 def build_actor_network(
-    obs_shape, num_actions, lr=0.01, num_dim=(64, 64), act_f="tanh"
+    obs_shape, num_actions, num_dim=(64, 64), act_f="tanh"
 ):
-    state_input = layers.Input(shape=obs_shape)
-    # advantage = layers.Input(shape=(1,))
-    # old_prediction = layers.Input(shape=(num_actions,))
+    state_input = layers.Input(shape=obs_shape, dtype=tf.float32)
 
     x = state_input
     for i, dim in enumerate(num_dim):
@@ -277,35 +286,8 @@ def build_actor_network(
     out_actions = layers.Dense(num_actions, activation="softmax", name="output")(x)
 
     model = models.Model(inputs=state_input, outputs=out_actions, name="actor")
-    # model.compile(optimizer=optimizers.Adam(lr=lr),
-    #               loss=ppo_discrete_loss(
-    #                   advantage=advantage,
-    #                   old_prediction=old_prediction))
     model.summary()
     return model
-
-
-from tensorflow.keras import backend as K
-
-
-def ppo_discrete_loss(advantage, old_prediction, entropy_coeff=5e-3, clip_value=0.2):
-    def loss(y_true, y_pred):
-        prob = tf.reduce_sum(y_true * y_pred, axis=-1)
-        old_prob = tf.reduce_sum(y_true * old_prediction, axis=-1)
-        r = prob / (old_prob + 1e-10)
-        loss = -tf.reduce_mean(
-            tf.minimum(
-                r * advantage,
-                tf.clip_by_value(
-                    r, clip_value_min=1 - clip_value, clip_value_max=1 + clip_value
-                )
-                * advantage,
-            )
-            + entropy_coeff * -(prob * tf.math.log(prob + 1e-10))
-        )
-        return loss
-
-    return loss
 
 
 def ppo_continuous_loss(advantage, old_prediction, noise=1.0, clip_value=0.2):
@@ -331,13 +313,36 @@ def ppo_continuous_loss(advantage, old_prediction, noise=1.0, clip_value=0.2):
 
 
 if __name__ == "__main__":
-    tf.keras.backend.set_floatx("float64")
+
+    from gym.wrappers import TransformObservation
+
+    # tf.keras.backend.set_floatx("float64")
     # env = gym.make("LunarLander-v2")
-    env = gym.make("CartPole-v1")
+    env = TransformObservation(
+        gym.make("CartPole-v1")
+        # gym.make("LunarLander-v2")
+        , f=lambda x: x.astype(np.float32)
+    )
 
     agent = PPOAgent(
         config=dict(
-            obs_shape=env.observation_space.shape, num_actions=env.action_space.n
+            obs_shape=env.observation_space.shape,
+            num_actions=env.action_space.n,
+            num_dim_critic=(32, 32),
+            act_f_critic="tanh",
+            num_dim_actor=(32, 32),
+            act_f_actor="tanh",
+            num_sgd_iter=100,
+            num_epochs=6,
+            sgd_minibatch_size=32,
+            train_batch_size=128,
+            clip_gradients_by_norm=40.0,
         )
     )
-    agent.run()
+    history = agent.run()
+    from matplotlib import pyplot as plt
+
+    plt.plot(history["score"])
+    plt.plot(history["actor_loss"])
+    plt.plot(history["critic_loss"])
+    plt.show()

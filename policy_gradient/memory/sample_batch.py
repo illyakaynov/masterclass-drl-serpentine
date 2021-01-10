@@ -192,7 +192,7 @@ class SampleBatch:
                 format(list(self.keys()), list(other.keys())))
         out = {}
         for k in self.keys():
-            out[k] = concat_aligned([self[k], other[k]])
+            out[k] = np.concatenate([self[k], other[k]])
         return SampleBatch(out)
 
     def keys(self):
