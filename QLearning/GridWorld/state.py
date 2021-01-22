@@ -1,28 +1,52 @@
 import numpy as np
 
-player_start = (2, 0)
-
-obj_coord = {
-    'walls': [(1, 1), (2, 1), (1, 2), (2, 2), (3, 2)],
-    'traps': [(4, 4), (2, 3)],
-    'goal': [(2, 4)]
+LAYOUTS = {
+    0: {
+        "size": (5, 5),
+        "player_start": (2, 0),
+        "objects": {
+            "walls": [(1, 1), (2, 1), (1, 2), (2, 2), (3, 2)],
+            "traps": [(4, 4), (2, 3)],
+            "goal": [(2, 4)],
+        },
+    },
+    1: {
+        "size": (4, 4),
+        "player_start": (0, 0),
+        "objects": {
+            "walls": [(1, 1), (2, 3), (3, 0), (1, 3)],
+            "traps": [],
+            "goal": [(3, 3)],
+        },
+    },
+    2: {
+        "size": (5, 5),
+        "player_start": (4, 0),
+        "objects": {
+            "walls": [],
+            "traps": [(4, 1), (4, 2), (4, 3)],
+            "goal": [(4, 4)],
+        },
+    },
 }
 
 
-
 class State:
-    def __init__(self, size=(5, 5)):
-        self.size_x, self.size_y = size
-        self.player = np.zeros(size, dtype=np.bool)
-        self.maze = np.zeros(size, dtype=np.int)
+    def __init__(self, layout_id=0):
+        self.layout_id = layout_id
+        self.layout = LAYOUTS[self.layout_id]
+        self.size = self.size_x, self.size_y = self.layout["size"]
+        self.player = np.zeros(self.size, dtype=np.bool)
+        self.maze = np.zeros(self.size, dtype=np.int)
         self.reset()
 
     def reset(self):
-        for i, (obj_name, pos_xy) in enumerate(obj_coord.items(), start=1):
+        for i, (obj_name, pos_xy) in enumerate(self.layout["objects"].items(), start=1):
             for x, y in pos_xy:
                 self.maze[x, y] = i
         self.player.fill(0)
-        self.player[player_start[0], player_start[1]] = 1
+        player_start_x, player_start_y = self.layout["player_start"]
+        self.player[player_start_x, player_start_y] = 1
 
     def move(self, dx=0, dy=0):
         old_x, old_y = self.get_player_pos()

@@ -37,7 +37,7 @@ def run_episode(env, agent, train=False, max_steps=100_000, render=False, sleep=
 
         if train:
             # save the transition
-            agent.update(current_state, action, reward, next_state, is_terminal)
+            agent.save_experience(current_state, action, reward, next_state, is_terminal)
 
         # update current state
         current_state = next_state

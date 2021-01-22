@@ -1,16 +1,16 @@
 import gym
 from gym import spaces
 
-from state import State
+from QLearning.GridWorld.state import State
 
 TRAP_REWARD = -10
 GOAL_REWARD = 50
 TIMESTEP_REWARD = -0.1
 
 class GridEnv(gym.Env):
-    def __init__(self):
+    def __init__(self, layout_id=0):
         super().__init__()
-        self.state = State()
+        self.state = State(layout_id=layout_id)
         self.time = 0
         self.end_time = 20
         max_state = 10 * self.state.shape[0] + self.state.shape[1]
@@ -20,6 +20,7 @@ class GridEnv(gym.Env):
     def reset(self):
         self.state.reset()
         self.time = 0
+        return self.get_obs()
 
     def apply_action(self, action):
         if action == 1:
@@ -74,3 +75,8 @@ class GridEnv(gym.Env):
 
     def get_state(self):
         return self.state
+
+    # def render(self, mode='txt'):
+    #     for
+    #
+    #     self.state.render()

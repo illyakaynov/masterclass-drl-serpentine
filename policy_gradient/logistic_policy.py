@@ -2,12 +2,12 @@ import numpy as np
 
 
 class LogisticPolicy:
-    def __init__(self, θ, α, γ):
+    def __init__(self, params, lr, gamma):
         # Initialize paramters θ, learning rate α and discount factor γ
 
-        self.θ = θ
-        self.α = α
-        self.γ = γ
+        self.params = params
+        self.lr = lr
+        self.gamma = gamma
 
     def logistic(self, y):
         # definition of logistic function
@@ -17,7 +17,7 @@ class LogisticPolicy:
     def probs(self, x):
         # returns probabilities of two actions
 
-        y = x @ self.θ
+        y = x @ self.params
         prob0 = self.logistic(y)
 
         return np.array([prob0, 1 - prob0])
@@ -33,7 +33,7 @@ class LogisticPolicy:
     def grad_log_p(self, x):
         # calculate grad-log-probs
 
-        y = x @ self.θ
+        y = x @ self.params
         grad_log_p0 = x - x * self.logistic(y)
         grad_log_p1 = -x * self.logistic(y)
 
@@ -50,7 +50,7 @@ class LogisticPolicy:
         discounted_rewards = np.zeros(len(rewards))
         cumulative_rewards = 0
         for i in reversed(range(0, len(rewards))):
-            cumulative_rewards = cumulative_rewards * self.γ + rewards[i]
+            cumulative_rewards = cumulative_rewards * self.gamma + rewards[i]
             discounted_rewards[i] = cumulative_rewards
 
         return discounted_rewards
@@ -70,7 +70,7 @@ class LogisticPolicy:
         dot = self.grad_log_p_dot_rewards(grad_log_p, actions, discounted_rewards)
 
         # gradient ascent on parameters
-        self.θ += self.α * dot
+        self.params += self.lr * dot
 
 def run_episode(env, policy, render=False):
 
@@ -100,14 +100,14 @@ def run_episode(env, policy, render=False):
 
     return totalreward, np.array(rewards), np.array(observations), np.array(actions), np.array(probs)
 
-def train(θ, α, γ, Policy, MAX_EPISODES=1000, seed=None, evaluate=False):
+def train(params, lr, gamma, policy, MAX_EPISODES=1000, seed=None, evaluate=False):
 
     # initialize environment and policy
     env = gym.make('CartPole-v0')
     if seed is not None:
         env.seed(seed)
     episode_rewards = []
-    policy = Policy(θ, α, γ)
+    policy = policy(params, lr, gamma)
 
     # train until MAX_EPISODES
     import time
@@ -133,24 +133,24 @@ def train(θ, α, γ, Policy, MAX_EPISODES=1000, seed=None, evaluate=False):
 
     return episode_rewards, policy
 
+if __name__ == "__main__":
+    # additional imports for saving and loading a trained policy
+    import gym
+    import gym.wrappers
+    from gym.wrappers.monitor import Monitor, load_results
 
-# additional imports for saving and loading a trained policy
-import gym
-import gym.wrappers
-from gym.wrappers.monitor import Monitor, load_results
+    # for reproducibility
+    GLOBAL_SEED = 0
+    np.random.seed(GLOBAL_SEED)
 
-# for reproducibility
-GLOBAL_SEED = 0
-np.random.seed(GLOBAL_SEED)
+    episode_rewards, policy = train(params=np.random.rand(4),
+                                    lr=0.002,
+                                    gamma=0.99,
+                                    policy=LogisticPolicy,
+                                    MAX_EPISODES=2000,
+                                    seed=GLOBAL_SEED,
+                                    evaluate=False)
 
-episode_rewards, policy = train(θ=np.random.rand(4),
-                                α=0.002,
-                                γ=0.99,
-                                Policy=LogisticPolicy,
-                                MAX_EPISODES=2000,
-                                seed=GLOBAL_SEED,
-                                evaluate=False)
-
-import matplotlib.pyplot as plt
-plt.plot(episode_rewards)
-plt.show()
+    import matplotlib.pyplot as plt
+    plt.plot(episode_rewards)
+    plt.show()

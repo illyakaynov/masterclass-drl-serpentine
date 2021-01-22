@@ -1,5 +1,11 @@
 import pygame
-from grid_env import GridEnv, TRAP_REWARD, GOAL_REWARD, TIMESTEP_REWARD
+from QLearning.GridWorld.grid_env import (
+    GOAL_REWARD,
+    TIMESTEP_REWARD,
+    TRAP_REWARD,
+    GridEnv,
+)
+from QLearning.GridWorld.QAgent import DoubleQAgent, QAgent
 
 BLUE = (0, 0, 255)
 BLACK = (0, 0, 0)
@@ -14,7 +20,7 @@ ALPHA_STEP = 0.05
 
 TOGGLE_LEARNING = "toggle_learning"
 RESET_PLAYER = "reset_player"
-RESET_AGENT = "reset_agent"
+RESET_AGENT_Q_VALUES = "reset_agent"
 GAMMA_DOWN = "gamma_down"
 GAMMA_UP = "gamma_up"
 EPSILON_DOWN = "epsilon_down"
@@ -31,18 +37,16 @@ DOWN = 4
 
 
 class GridWorld:
-    def __init__(self):
+    def __init__(self, layout_id=0, screen_size=(800, 800)):
         pygame.init()
 
-        self.screen_size = (800, 800)
+        self.screen_size = screen_size
         self.screen = pygame.display.set_mode(self.screen_size)
         pygame.display.flip()
         pygame.display.set_caption("GridWorld-QLearning")
         self.player_size = 10
 
-        self.env = GridEnv()
-        from QAgent import QAgent
-
+        self.env = GridEnv(layout_id)
         state = self.env.get_state()
         self.agent = QAgent(self.env.observation_space.n, self.env.action_space.n)
 
@@ -57,6 +61,7 @@ class GridWorld:
     def reset(self):
         self.score = 0
         self.env.reset()
+        self.agent.reset()
         pass
 
     def draw_player(self):
@@ -90,25 +95,34 @@ class GridWorld:
 
     def draw_grid(self):
         cell_width = self.margins[0]
+        cell_height = self.margins[1]
         state = self.env.get_state()
         for x in range(0, state.shape[0]):
             for y in range(0, state.shape[0]):
                 posx = (x + 1) * self.margins[0] - 0.5 * self.margins[0]
-                posy = (y + 1) * self.margins[1] - 0.5 * self.margins[0]
+                posy = (y + 1) * self.margins[1] - 0.5 * self.margins[1]
                 if state.get_state_transpose(x, y) == 1:
-                    rect = pygame.Rect(posx, posy, cell_width, cell_width)
+                    rect = pygame.Rect(posx, posy, cell_width, cell_height)
                     pygame.draw.rect(self.screen, GREY, rect, 0)
                 elif state.get_state_transpose(x, y) == 2:
-                    rect = pygame.Rect(posx, posy, cell_width, cell_width)
+                    rect = pygame.Rect(posx, posy, cell_width, cell_height)
                     pygame.draw.rect(self.screen, RED, rect, 0)
-                    self.draw_text(posx + cell_width//2, posy + cell_width//2, text=str(TRAP_REWARD))
+                    self.draw_text(
+                        posx + cell_width // 2,
+                        posy + cell_width // 2,
+                        text=str(TRAP_REWARD),
+                    )
 
                 elif state.get_state_transpose(x, y) == 3:
-                    rect = pygame.Rect(posx, posy, cell_width, cell_width)
+                    rect = pygame.Rect(posx, posy, cell_width, cell_height)
                     pygame.draw.rect(self.screen, GREEN, rect, 0)
-                    self.draw_text(posx + cell_width//2, posy + cell_width//2, text=str(GOAL_REWARD))
+                    self.draw_text(
+                        posx + cell_width // 2,
+                        posy + cell_height // 2,
+                        text=str(GOAL_REWARD),
+                    )
                 else:
-                    rect = pygame.Rect(posx, posy, cell_width, cell_width)
+                    rect = pygame.Rect(posx, posy, cell_width, cell_height)
                     pygame.draw.rect(self.screen, BLACK, rect, 1)
                     self.draw_q_labels(
                         posx,
@@ -121,21 +135,29 @@ class GridWorld:
         epsilon = self.agent.epsilon
         gamma = self.agent.gamma
         alpha = self.agent.alpha
+        episode_reward = self.agent.sum_rewards
+        return_ = self.agent.return_
         self.draw_text(
             50,
             40,
             pos="topleft",
-            text="Epsilon {:.2f}, Gamma {:.2f}, Alpha {:.2f}".format(
-                epsilon, gamma, alpha
+            text="Epsilon {:.2f}, Gamma {:.2f}, Alpha {:.2f}"
+                 ", Episode Reward {:.2f}, Episode Return {:.2f}".format(
+                epsilon, gamma, alpha,
+                episode_reward, return_
             ),
         )
 
-    def draw_text(self, x, y,
-                  pos="center",
-                  text="",
-                  rotate_degrees=None,
-                  color_text=BLACK,
-                  color_background=WHITE):
+    def draw_text(
+        self,
+        x,
+        y,
+        pos="center",
+        text="",
+        rotate_degrees=None,
+        color_text=BLACK,
+        color_background=WHITE,
+    ):
         font = pygame.font.Font("freesansbold.ttf", 16)
         text = font.render(text, True, color_text, color_background)
         textRect = text.get_rect()
@@ -184,7 +206,7 @@ class GridWorld:
                     return_event = RESET_PLAYER
 
                 if event.key == pygame.K_t:
-                    return_event = RESET_AGENT
+                    return_event = RESET_AGENT_Q_VALUES
 
                 if event.key == pygame.K_q:
                     return_event = EPSILON_UP
@@ -228,8 +250,8 @@ class GridWorld:
                 if event:
                     if event == RESET_PLAYER:
                         self.reset()
-                    if event == RESET_AGENT:
-                        self.agent.reset()
+                    if event == RESET_AGENT_Q_VALUES:
+                        self.agent.reset_q_table()
 
                     if event == EPSILON_UP:
                         self.agent.epsilon += EPSILON_STEP
@@ -277,7 +299,8 @@ class GridWorld:
         return done
 
 
-env = GridWorld()
-env.reset()
-done = env.step()
+if __name__ == "__main__":
+    env = GridWorld(2)
+    env.reset()
+    done = env.step()
 # print(env.agent.q_table)

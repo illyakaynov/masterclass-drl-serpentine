@@ -33,8 +33,8 @@ default_config = dict(
     act_f_actor="tanh",
     vf_share_layers=False,
     entropy_coeff=1e-5,
-    lr_actor=0.0003,
-    lr_critic=0.0003,
+    lr_actor=0.01,
+    lr_critic=0.001,
     clip_gradients_by_norm=None,
 )
 
@@ -88,6 +88,12 @@ class PPOAgent:
         action_matrix[action] = 1.0
         return action, action_matrix, p
 
+    def get_action_continuous(self, obs):
+        p = self.actor.predict(obs[None, ...])
+        action = action_matrix = p[0] + np.random.normal(loc=0, scale=1.0, size=p[0].shape)
+
+        return action, action_matrix, p
+
     def compute_action(self, obs):
         if self.continuous:
             ...
@@ -130,11 +136,15 @@ class PPOAgent:
                 score = 0
                 obs = env.reset()
                 episode_id += 1
-                rewards += discount_cumsum(
+                return_ = discount_cumsum(
                     np.asarray(episode_rewards), self.gamma
-                ).tolist()
+                )
+                return_ = ((return_ - return_.mean()) / (return_.std() + 1e-10))
+                rewards += return_.tolist()
                 episode_rewards = []
-        rewards += discount_cumsum(np.asarray(episode_rewards), self.gamma).tolist()
+        return_ = discount_cumsum(np.asarray(episode_rewards), self.gamma)
+        return_ = ((return_ - return_.mean()) / (return_.std() + 1e-10))
+        rewards += return_.tolist()
         return SampleBatch(
             {
                 SampleBatch.OBS: observations,
@@ -242,7 +252,7 @@ class PPOAgent:
                 history["critic_loss"][-1],
             )
             self.sgd_iters += 1
-            val_score = np.mean([self.run_episode() for i in range(5)])
+            val_score = np.mean([self.run_episode() for i in range(1)])
             history["score"].append(val_score)
             print(val_score)
 
@@ -275,7 +285,7 @@ def build_critic_network(
 
 
 def build_actor_network(
-    obs_shape, num_actions, num_dim=(64, 64), act_f="tanh"
+    obs_shape, num_actions, num_dim=(64, 64), act_f="tanh", output_act_f='softmax'
 ):
     state_input = layers.Input(shape=obs_shape, dtype=tf.float32)
 
@@ -283,7 +293,7 @@ def build_actor_network(
     for i, dim in enumerate(num_dim):
         x = layers.Dense(dim, activation=act_f, name=f"hidden_{i}")(x)
 
-    out_actions = layers.Dense(num_actions, activation="softmax", name="output")(x)
+    out_actions = layers.Dense(num_actions, activation=output_act_f, name="output")(x)
 
     model = models.Model(inputs=state_input, outputs=out_actions, name="actor")
     model.summary()
@@ -328,14 +338,14 @@ if __name__ == "__main__":
         config=dict(
             obs_shape=env.observation_space.shape,
             num_actions=env.action_space.n,
-            num_dim_critic=(32, 32),
+            num_dim_critic=(16, 16),
             act_f_critic="tanh",
-            num_dim_actor=(32, 32),
+            num_dim_actor=(16, 16),
             act_f_actor="tanh",
             num_sgd_iter=100,
-            num_epochs=6,
+            num_epochs=10,
             sgd_minibatch_size=32,
-            train_batch_size=128,
+            train_batch_size=200,
             clip_gradients_by_norm=40.0,
         )
     )
