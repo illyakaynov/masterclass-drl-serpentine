@@ -4,7 +4,7 @@ import gym
 import numpy as np
 import tensorflow as tf
 from memory.sample_batch import SampleBatch, discount_cumsum
-from tensorboardX import SummaryWriter
+# from tensorboardX import SummaryWriter
 from tensorflow.keras import layers, models, optimizers
 
 import tensorflow.keras.backend as K
@@ -223,21 +223,21 @@ class PPOAgent:
                     zip(actor_gradients, self.actor.trainable_variables)
                 )
 
-                for i in range(len(actor_gradients)):
-                    tf.summary.histogram(
-                        f"actor_gradient_{i}",
-                        actor_gradients[i],
-                        step=self.total_epochs,
-                    )
-                for i in range(len(self.actor.trainable_variables)):
-                    tf.summary.histogram(
-                        f"actor_weights_{i}",
-                        self.actor.trainable_variables[i],
-                        step=self.total_epochs,
-                    )
+                # for i in range(len(actor_gradients)):
+                #     tf.summary.histogram(
+                #         f"actor_gradient_{i}",
+                #         actor_gradients[i],
+                #         step=self.total_epochs,
+                #     )
+                # for i in range(len(self.actor.trainable_variables)):
+                #     tf.summary.histogram(
+                #         f"actor_weights_{i}",
+                #         self.actor.trainable_variables[i],
+                #         step=self.total_epochs,
+                #     )
                 tf.summary.scalar('entropy', tf.reduce_mean(entropy), step=self.total_epochs)
-                for i in range(len(prob)):
-                    tf.summary.scalar(f'action_prob_{i}', tf.reduce_mean(prob[i]), step=self.total_epochs)
+                # for i in range(len(prob)):
+                #     tf.summary.scalar(f'action_prob_{i}', tf.reduce_mean(prob[i]), step=self.total_epochs)
 
                 self.total_epochs += 1
 
@@ -253,6 +253,7 @@ class PPOAgent:
             )
             self.sgd_iters += 1
             val_score = np.mean([self.run_episode() for i in range(1)])
+            tf.summary.scalar("Validation Reward", val_score, self.sgd_iters)
             history["score"].append(val_score)
             print(val_score)
 
@@ -329,8 +330,8 @@ if __name__ == "__main__":
     # tf.keras.backend.set_floatx("float64")
     # env = gym.make("LunarLander-v2")
     env = TransformObservation(
-        gym.make("CartPole-v1")
-        # gym.make("LunarLander-v2")
+        # gym.make("CartPole-v1")
+        gym.make("LunarLander-v2")
         , f=lambda x: x.astype(np.float32)
     )
 
@@ -338,15 +339,18 @@ if __name__ == "__main__":
         config=dict(
             obs_shape=env.observation_space.shape,
             num_actions=env.action_space.n,
-            num_dim_critic=(16, 16),
+            num_dim_critic=(64, 64),
             act_f_critic="tanh",
-            num_dim_actor=(16, 16),
+            num_dim_actor=(64, 64),
             act_f_actor="tanh",
-            num_sgd_iter=100,
-            num_epochs=10,
-            sgd_minibatch_size=32,
-            train_batch_size=200,
+            num_sgd_iter=1000,
+            num_epochs=30,
+            sgd_minibatch_size=128,
+            train_batch_size=4000,
             clip_gradients_by_norm=40.0,
+            entropy_coeff=1e-5,
+            lr_actor=0.001,
+            lr_critic=0.001,
         )
     )
     history = agent.run()

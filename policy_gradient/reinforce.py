@@ -149,11 +149,11 @@ class Reinforce:
         model = Sequential()
 
         # input shape is of observations
-        model.add(Dense(32, input_shape=obs_shape, activation="relu"))
+        model.add(Dense(64, input_shape=obs_shape, activation="tanh"))
         # add a relu layer
         # model.add(Dense(32, activation="tanh"))
-        model.add(Dense(32, activation="relu"))
-        model.add(Dense(32, activation="relu"))
+        model.add(Dense(64, activation="tanh"))
+        model.add(Dense(64, activation="tanh"))
 
         # output shape is according to the number of action
         # The softmax function outputs a probability distribution over the actions
@@ -180,6 +180,7 @@ def run_episode(env, agent):
                 SampleBatch.INFOS: info,
             }
         )
+        # print(obs, action, reward)
         obs = next_obs
         score += reward
     return score
@@ -193,7 +194,7 @@ env = gym.make("CartPole-v0")
 # n_actions = env.action_space.n
 
 
-from policy_gradient.cartpole_continuous import ContinuousCartPoleEnv
+# from policy_gradient.cartpole_continuous import ContinuousCartPoleEnv
 #
 # env = ContinuousCartPoleEnv()
 env = gym.make("LunarLanderContinuous-v2")
@@ -210,15 +211,15 @@ agent = Reinforce(
         obs_shape=env.observation_space.shape,
         is_continuous=is_continuous,
         entropy_coeff=1e-7,
-        lr=0.01,
-        vf_loss_coeff=1.
+        lr=0.001,
+        vf_loss_coeff=.1
     )
 )
 
 import matplotlib.pyplot as plt
 
 scores = []
-for i in range(500):
+for i in range(30000):
     score = run_episode(env, agent)
     agent.update()
     print(i, score)
@@ -227,9 +228,12 @@ for i in range(500):
         plt.plot(scores)
         plt.show()
 
+        from gym.wrappers import Monitor
+        eval_env = Monitor(env, 'moonlander', video_callable=lambda x: True, force=True)
+        run_episode(eval_env, agent)
+        eval_env.close()
+
+
 plt.plot(scores)
 plt.show()
 
-# from gym.wrappers import Monitor
-# env = Monitor(env, 'test_moonlander', video_callable=lambda x: True, force=True)
-# run_episode(env, agent)
