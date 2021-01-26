@@ -3,8 +3,8 @@ from gym import spaces
 
 from QLearning.GridWorld.state import State
 
-TRAP_REWARD = -10
-GOAL_REWARD = 50
+TRAP_REWARD = -1
+GOAL_REWARD = +1
 TIMESTEP_REWARD = -0.1
 
 class GridEnv(gym.Env):
@@ -55,8 +55,9 @@ class GridEnv(gym.Env):
         if self.state.get_state(x, y) == 3:
             done = True
 
-        if self.time >= self.end_time:
-            done = True
+        # if self.time >= self.end_time:
+        #     done = True
+        done = False
         return obs, reward, done, {}
 
     def compute_reward(self):

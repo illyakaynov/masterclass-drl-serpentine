@@ -65,7 +65,7 @@ class QAgent:
             action = int(action)
         return action
 
-    def update(self, state, action, reward, next_state, is_terminal):
+    def save_experience(self, state, action, reward, next_state, is_terminal):
         self.return_ = reward + self.gamma * self.return_
         self.replay_memory.insert((state, action, reward, next_state, is_terminal))
 
