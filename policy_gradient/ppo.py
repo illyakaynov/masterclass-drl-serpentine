@@ -65,6 +65,8 @@ default_config = dict(
     entropy_coeff=1e-5,
     lr=0.01,
     vf_loss_coeff=1.0,
+    vf_clip_param=10.0,
+
     clip_gradients_by_norm=None,
 )
 
@@ -97,6 +99,7 @@ class PPOAgent:
         self.gamma = config["gamma"]
         self.lr = config["lr"]
         self.vf_loss_coeff = config["vf_loss_coeff"]
+        self.vf_clip_param = config["vf_clip_param"]
         self.clip_value = config["clip_value"]
         self.entropy_coeff = config["entropy_coeff"]
 
@@ -151,11 +154,12 @@ class PPOAgent:
             action_old_log_p = calculate_log_p_discrete(actions_old, action_prob)
             advantages = train_batch[SampleBatch.ADVANTAGES].astype("float32")
             value_targets = train_batch[SampleBatch.VALUE_TARGETS].astype("float32")
+            old_value_pred = train_batch[SampleBatch.VF_PREDS].astype("float32")
             # pred_values = 0
 
             dataset = (
                 tf.data.Dataset.from_tensor_slices(
-                    (obs, advantages, action_old_log_p, actions_old, value_targets)
+                    (obs, advantages, action_old_log_p, actions_old, value_targets, old_value_pred)
                 )
                 .batch(self.sgd_minibatch_size)
                 .shuffle(1)
@@ -166,13 +170,18 @@ class PPOAgent:
                 action_old_log_p_batch,
                 action_old_batch,
                 value_target_batch,
+                old_value_pred_batch
             ) in dataset:
 
                 with tf.GradientTape() as tape:
-                    critic_loss = (
-                        K.mean(K.square(value_target_batch - self.critic(obs_batch)))
-                        * self.vf_loss_coeff
-                    )
+                    value_fn_out = self.critic(obs_batch)
+                    vf_loss1 = tf.square(value_fn_out - value_target_batch)
+                    vf_clipped = old_value_pred_batch + tf.clip_by_value(
+                        value_fn_out - old_value_pred_batch, -self.vf_clip_param,
+                        self.vf_clip_param)
+                    vf_loss2 = tf.square(vf_clipped - value_target_batch)
+                    vf_loss = tf.maximum(vf_loss1, vf_loss2)
+                    critic_loss = tf.reduce_mean(vf_loss) * self.vf_loss_coeff
 
                 critic_gradients = tape.gradient(
                     critic_loss, self.critic.trainable_variables
@@ -252,6 +261,7 @@ class PPOAgent:
                 history["critic_loss"][-1],
             )
             self.sgd_iters += 1
+
             val_score = np.mean([self.run_episode() for i in range(1)])
             tf.summary.scalar("Validation Reward", val_score, self.sgd_iters)
             history["score"].append(val_score)
@@ -262,11 +272,14 @@ class PPOAgent:
     def run_episode(self):
         done = False
         score = 0
+        env = Monitor(gym.make("LunarLander-v2"), logdir, video_callable=lambda x: True, force=True)
+
         obs = env.reset()
         while not done:
             action, __ = self.compute_action(obs)
             obs, reward, done, info = env.step(action)
             score += reward
+        env.close()
         return score
 
 
@@ -290,7 +303,7 @@ def build_actor_network(
 
     x = state_input
     for i, dim in enumerate(num_dim):
-        x = layers.Dense(dim, activation=act_f, name=f"hidden_{i}")(x)
+        x = layers.Dense(dim, activation=act_f, name=f"hidden_{i}", kernel_initializer=tf.keras.initializers.RandomNormal(stddev=0.01))(x)
 
     out_actions = layers.Dense(num_actions, activation=output_act_f, name="output")(x)
 
@@ -374,13 +387,13 @@ if __name__ == "__main__":
     from gym.wrappers import TransformObservation
 
     # tf.keras.backend.set_floatx("float64")
-    # env = gym.make("LunarLander-v2")
-    env = TransformObservation(
-        # gym.make("CartPole-v1")
-        gym.make("LunarLander-v2")
-        ,
-        f=lambda x: x.astype(np.float32),
-    )
+    env = gym.make("LunarLander-v2")
+    # env = TransformObservation(
+    #     gym.make("CartPole-v1")
+        # gym.make("LunarLander-v2")
+        # ,
+        # f=lambda x: x.astype(np.float32),
+    # )
 
     agent = PPOAgent(
         config=dict(
@@ -391,20 +404,25 @@ if __name__ == "__main__":
             clip_value=0.2,
             gamma=0.99,
             num_sgd_iter=100,
-            num_epochs=10,
-            sgd_minibatch_size=32,
-            train_batch_size=512,
-            num_dim_critic=(256, 256),
-            act_f_critic="selu",
-            num_dim_actor=(256, 256),
-            act_f_actor="selu",
+            num_epochs=30,
+            sgd_minibatch_size=128,
+            train_batch_size=1024,
+            num_dim_critic=(512, 256, 64),
+            act_f_critic="relu",
+            num_dim_actor=(512, 256, 64),
+            act_f_actor="relu",
             vf_share_layers=False,
-            entropy_coeff=1e-7,
-            lr=1e-4,
-            vf_loss_coeff=0.01,
-            clip_gradients_by_norm=40.0,
+            entropy_coeff=1e-3,
+            lr=0.00025,
+            vf_loss_coeff=1.,
+            clip_gradients_by_norm=None,
         )
     )
+    from gym.wrappers import Monitor
+    logdir = "moonlande_2"
+
+    writer = tf.summary.create_file_writer(logdir + "/batch_size_128_lambda_1_epochs_30")
+    writer.set_as_default()
     history = agent.run()
     from matplotlib import pyplot as plt
 
