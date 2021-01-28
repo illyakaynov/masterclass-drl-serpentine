@@ -57,7 +57,7 @@ class GridEnv(gym.Env):
 
         # if self.time >= self.end_time:
         #     done = True
-        done = False
+        # done = False
         return obs, reward, done, {}
 
     def compute_reward(self):

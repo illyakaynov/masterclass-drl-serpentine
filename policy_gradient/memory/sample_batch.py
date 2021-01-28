@@ -23,6 +23,8 @@ class SampleBatch:
     ACTION_PROB = "action_prob"
     ACTION_LOGP = "action_logp"
 
+    MEANS_AND_LOG_STDS = 'means_and_log_stds'
+
     # Uniquely identifies an episode.
     EPS_ID = "eps_id"
 
@@ -174,7 +176,6 @@ def compute_advantages(
     lambda_: float = 1.0,
     use_gae: bool = True,
     use_critic: bool = True,
-    standardize_advantages: bool = True
 ):
     """
     Given a rollout, compute its value targets and the advantages.
@@ -228,11 +229,7 @@ def compute_advantages(
                 rollout[SampleBatch.ADVANTAGES]
             )
 
-
     rollout[SampleBatch.ADVANTAGES] = rollout[SampleBatch.ADVANTAGES].astype(np.float32)
-    if standardize_advantages:
-        rollout[SampleBatch.ADVANTAGES] = standardized(rollout[SampleBatch.ADVANTAGES])
-
 
     assert all(
         val.shape[0] == rollout_size for key, val in rollout.items()
