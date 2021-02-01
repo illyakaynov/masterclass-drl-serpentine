@@ -40,9 +40,9 @@ DOWN = 4
 
 
 class GridWorld:
-    def __init__(self, layout_id=0, screen_size=(800, 800)):
+    def __init__(self, layout_id=0, screen_size=(800, 800), display_logo=False):
         pygame.init()
-
+        self.display_logo = display_logo
         self.screen_size = screen_size
         self.screen = pygame.display.set_mode(self.screen_size)
         pygame.display.flip()
@@ -72,7 +72,7 @@ class GridWorld:
     def draw_player(self):
         state = self.env.get_state()
         y, x = state.get_player_pos()
-        robot_image = pygame.image.load(join('images', 'robot.png'))
+        robot_image = pygame.image.load(join('QLearning', 'GridWorld', 'images', 'robot.png'))
         img_x, img_y = robot_image.get_size()
         pos = (int(x) + 1) * self.margins[0] - img_x//2, (int(y) + 1) * self.margins[1] - img_y//2
         self.screen.blit(robot_image, pos)
@@ -182,11 +182,22 @@ class GridWorld:
             textRect.topleft = (x, y)
         self.screen.blit(text, textRect)
 
+    def draw_logo(self):
+        robot_image = pygame.image.load(join('QLearning', 'GridWorld', 'images', 'logo_transparant.png'))
+        size = robot_image.get_size()
+        size = (int(size[0] / 4.1), int(size[1] / 4.1))
+        robot_image = pygame.transform.scale(robot_image, size)
+        pos = (self.screen_size[0] // 2 - robot_image.get_size()[0]//2 - 70,
+               self.screen_size[1] // 2 - robot_image.get_size()[1]//2 - 50)
+        self.screen.blit(robot_image, pos)
+
     def draw_game(self):
         self.screen.fill((255, 255, 255))
         self.draw_grid()
         self.draw_player()
         self.draw_agent_params()
+        if self.display_logo:
+            self.display_logo()
         pygame.display.update()
 
     def get_action_from_input(self):
@@ -312,7 +323,7 @@ class GridWorld:
 
             self.draw_game()
             if done:
-                env.reset()
+                self.reset()
                 done = False
         return done
 
