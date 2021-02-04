@@ -2,15 +2,38 @@ import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Conv2D, Flatten, Dense
 
-from dqn import NoisyDense
+from QLearning.dqn import NoisyDense
 
 
 class DeepQNetwork:
-    def __init__(self, state_shape, n_actions, learning_rate=1e-4, gamma=0.99):
+    def __init__(
+        self,
+        state_shape,
+        n_actions,
+        learning_rate=1e-4,
+        gamma=0.99,
+        use_cnn=True,
+        mlp_n_hidden=(32, 32, 64),
+        mlp_act_f="relu",
+        cnn_number_of_maps=(32, 64, 64),
+        cnn_kernel_size=(8, 4, 3),
+        cnn_kernel_stride=(4, 2, 1),
+        mlp_value_n_hidden=(256, 512),
+        mlp_value_act_f="tanh",
+    ):
         self.n_actions = n_actions
         self.state_shape = state_shape
+        self.use_cnn = use_cnn
 
-        self.online_network = self.create_model('dqn')
+        self.mlp_n_hidden = mlp_n_hidden
+        self.mlp_act_f = mlp_act_f
+        self.cnn_number_of_maps = cnn_number_of_maps
+        self.cnn_kernel_size = cnn_kernel_size
+        self.cnn_kernel_stride = cnn_kernel_stride
+        self.mlp_value_n_hidden = mlp_value_n_hidden
+        self.mlp_value_act_f = mlp_value_act_f
+
+        self.online_network = self.create_model("dqn")
 
         self.state_shape = state_shape
 
@@ -20,30 +43,51 @@ class DeepQNetwork:
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
 
     def create_model(self, model_name):
-        input_state = tf.keras.Input(shape=self.state_shape,
-                                     batch_size=None,
-                                     name='state_input',
-                                     dtype=tf.uint8)
+        input_obs = tf.keras.Input(
+            shape=self.state_shape, batch_size=None, name="state_input", dtype=tf.float32
+        )
 
-        x = tf.divide(tf.cast(input_state, dtype=tf.float32), tf.constant(255., dtype=tf.float32))
+        x = self.create_input_embedder(input_obs)
 
-        x = Conv2D(16, kernel_size=(8, 8), strides=(4, 4),
-                   padding='valid', activation='relu', name='conv1')(x)
-        x = Conv2D(32, kernel_size=(4, 4), strides=(2, 2),
-                   padding='valid', activation='relu', name='conv2')(x)
-        x = Conv2D(32, kernel_size=(3, 3), strides=(1, 1),
-                   padding='valid', activation='relu', name='conv3')(x)
+        for i, n_dim in enumerate(self.mlp_value_n_hidden):
+            x = Dense(n_dim, activation=self.mlp_value_act_f, name=f"dense_value_{i}")(
+                x
+            )
 
-        x = Flatten()(x)
+        q_values = Dense(self.n_actions, activation="linear", name="value_output")(x)
 
-        x = Dense(256, activation='tanh', name='hidden_dense')(x)
-
-        x = Dense(512, activation='tanh', name='hidden_dense_value')(x)
-
-        q_values = Dense(self.n_actions, activation='linear', name='value_output')(x)
-
-        q_network = Model(inputs=[input_state], outputs=[q_values], name=model_name)
+        q_network = Model(inputs=[input_obs], outputs=[q_values], name=model_name)
         return q_network
+
+    def create_input_embedder(self, input_tensor):
+        x = input_tensor
+        if self.use_cnn:
+            for i, (n_filters, kernel_size, strides) in enumerate(
+                zip(
+                    self.cnn_number_of_maps,
+                    self.cnn_kernel_size,
+                    self.cnn_kernel_stride,
+                )
+            ):
+
+                x = Conv2D(
+                    n_filters,
+                    kernel_size=kernel_size,
+                    strides=strides,
+                    padding="valid",
+                    activation="relu",
+                    name=f"conv_{i}",
+                )(input_tensor)
+            x = Flatten()(x)
+
+        else:
+            for i, n_dim in enumerate(self.mlp_n_hidden):
+                x = Dense(
+                    n_dim,
+                    activation=self.mlp_act_f,
+                    name=f"dense_hidden_{i}",
+                )(x)
+        return x
 
     @tf.function
     def get_best_action(self, state):
@@ -54,7 +98,13 @@ class DeepQNetwork:
         return tf.reduce_max(self.online_network(state), axis=1)
 
     @tf.function
-    def train_op(self, replay_state, replay_action, replay_rewards, replay_next_state, terminal):
+    def train_op(
+        self, replay_state, replay_action, replay_rewards, replay_next_state, terminal
+    ):
+        # We assume that if have received a uint8 this means we need to normalize
+        if replay_state.dtype == "uint8":
+            replay_state = replay_state.astype("float32") / 255.0
+
         replay_continues = 1.0 - terminal
         # get max q-values for the next state
         q_best_next = self.get_best_action_value(replay_next_state)
@@ -64,13 +114,19 @@ class DeepQNetwork:
             # calculate current q-values
             q_values = self.online_network(replay_state)
             # get the q-values of the executed actions
-            q_values_masked = tf.reduce_sum(q_values * tf.one_hot(replay_action, self.n_actions), axis=1, keepdims=True)
+            q_values_masked = tf.reduce_sum(
+                q_values * tf.one_hot(replay_action, self.n_actions),
+                axis=1,
+                keepdims=True,
+            )
             # calculate loss
             loss = self.loss_layer(q_values_masked, y_val)
         # compute gradients
         gradients = tape.gradient(loss, self.online_network.trainable_variables)
         # apply gradients
-        self.optimizer.apply_gradients(zip(gradients, self.online_network.trainable_variables))
+        self.optimizer.apply_gradients(
+            zip(gradients, self.online_network.trainable_variables)
+        )
         return loss
 
     def update(self, *args, **kwargs):
@@ -95,10 +151,9 @@ class DeepQNetwork:
 
 
 class DoubleDQN(DeepQNetwork):
-    def __init__(self, target_network_update_freq=8000,
-                 *args, **kwargs):
+    def __init__(self, target_network_update_freq=8000, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.target_network = self.create_model('target_dqn')
+        self.target_network = self.create_model("target_dqn")
         # At the begining of the training set the same weights to both networks
         self.hard_update_target_network()
         self.steps = 0
@@ -121,62 +176,59 @@ class DoubleDQN(DeepQNetwork):
 
 class DuelingDDQN(DoubleDQN):
     def create_model(self, model_name):
-        input_state = tf.keras.Input(shape=self.state_shape,
-                                     batch_size=None,
-                                     name='state_input',
-                                     dtype=tf.uint8)
+        input_obs = tf.keras.Input(
+            shape=self.state_shape, batch_size=None, name="state_input", dtype=tf.float32
+        )
 
-        x = tf.divide(tf.cast(input_state, dtype=tf.float32), tf.constant(255., dtype=tf.float32))
-
-        x = Conv2D(16, kernel_size=(8, 8), strides=(4, 4),
-                   padding='valid', activation='relu', name='conv1')(x)
-        x = Conv2D(32, kernel_size=(4, 4), strides=(2, 2),
-                   padding='valid', activation='relu', name='conv2')(x)
-        x = Conv2D(32, kernel_size=(3, 3), strides=(1, 1),
-                   padding='valid', activation='relu', name='conv3')(x)
+        x = self.create_input_embedder(input_obs)
 
         x = Flatten()(x)
 
-        x = Dense(512, activation='tanh', name='hidden_dense')(x)
+        for i, n_dim in enumerate(self.mlp_value_n_hidden):
+            x = Dense(n_dim, activation=self.mlp_value_act_f, name=f"dense_value_{i}")(
+                x
+            )
 
-        value = Dense(1, activation='linear', name='hidden_dense_value')(x)
-        advantage = Dense(self.n_actions, activation='linear', name='dense_advantage')(x)
+        value = Dense(1, activation="linear", name="hidden_dense_value")(x)
+        advantage = Dense(self.n_actions, activation="linear", name="dense_advantage")(
+            x
+        )
 
         # Q(s,a) = V(s) + (A(s,a) - 1/|A| * sum A(s,a'))
-        q_values = value + tf.subtract(advantage, tf.reduce_mean(advantage, axis=1, keepdims=True))
+        q_values = value + tf.subtract(
+            advantage, tf.reduce_mean(advantage, axis=1, keepdims=True)
+        )
 
-        q_network = Model(inputs=[input_state], outputs=[q_values], name=model_name)
+        q_network = Model(inputs=[input_obs], outputs=[q_values], name=model_name)
 
         return q_network
 
 
 class NoisyDuelingDDQN(DuelingDDQN):
-
     def create_model(self, model_name):
-        input_state = tf.keras.Input(shape=self.state_shape,
-                                     batch_size=None,
-                                     name='state_input',
-                                     dtype=tf.uint8)
+        input_obs = tf.keras.Input(
+            shape=self.state_shape, batch_size=None, name="state_input", dtype=tf.uint8
+        )
 
-        x = tf.divide(tf.cast(input_state, dtype=tf.float32), tf.constant(255., dtype=tf.float32))
-
-        x = Conv2D(16, kernel_size=(8, 8), strides=(4, 4),
-                   padding='valid', activation='relu', name='conv1')(x)
-        x = Conv2D(32, kernel_size=(4, 4), strides=(2, 2),
-                   padding='valid', activation='relu', name='conv2')(x)
-        x = Conv2D(32, kernel_size=(3, 3), strides=(1, 1),
-                   padding='valid', activation='relu', name='conv3')(x)
+        x = self.create_input_embedder(input_obs)
 
         x = Flatten()(x)
 
-        x = NoisyDense(512, activation='tanh', name='hidden_dense')(x)
+        for i, n_dim in enumerate(self.mlp_value_n_hidden):
+            x = NoisyDense(n_dim, activation=self.mlp_value_act_f, name=f"dense_value_{i}")(
+                x
+            )
 
-        value = NoisyDense(1, activation='linear', name='hidden_dense_value')(x)
-        advantage = NoisyDense(self.n_actions, activation='linear', name='dense_advantage')(x)
+        value = NoisyDense(1, activation="linear", name="hidden_dense_value")(x)
+        advantage = NoisyDense(
+            self.n_actions, activation="linear", name="dense_advantage"
+        )(x)
 
         # Q(s,a) = V(s) + (A(s,a) - 1/|A| * sum A(s,a'))
-        q_values = value + tf.subtract(advantage, tf.reduce_mean(advantage, axis=1, keepdims=True))
+        q_values = value + tf.subtract(
+            advantage, tf.reduce_mean(advantage, axis=1, keepdims=True)
+        )
 
-        q_network = Model(inputs=[input_state], outputs=[q_values], name=model_name)
+        q_network = Model(inputs=[input_obs], outputs=[q_values], name=model_name)
 
         return q_network

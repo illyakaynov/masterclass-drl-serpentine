@@ -8,9 +8,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from collections import defaultdict
+
 
 # Define loop for one episode
-def run_episode(env, agent, train=False, max_steps=100_000, render=False, sleep=0.1):
+def run_episode(env, agent, train=True, max_steps=100_000, render=False, sleep=0.1):
     """
     run one episode and report statistics
     :param env: (gym.Environment)
@@ -64,7 +66,7 @@ def run_episode(env, agent, train=False, max_steps=100_000, render=False, sleep=
 
     # Call to clear internal agent statistics (reward, return, etc.)
     stats = agent.finalize_episode()
-
+    env.close()
     total_time = time.time() - start_timer
     return {'score': score,
             'steps_per_game': steps,
@@ -77,8 +79,11 @@ def run_episode(env, agent, train=False, max_steps=100_000, render=False, sleep=
 def run_experiment(env,
                    agent,
                    runs=100,
-                   plot_stats=['score', 'steps_per_game', 'framerate', 'loss', 'epsilon'],
-                   history={}):
+                   x_plot=None,
+                   plot_stats=None,
+                   history=None,
+                   plot_period=1,
+                   **kwargs):
     """
 
     :param env: (gym.Environment)
@@ -93,26 +98,41 @@ def run_experiment(env,
     fig, axs = plt.subplots(num_plots, 1, squeeze=False, figsize=(10, 5 * num_plots))
     axs = axs.ravel()
 
-    if history is None:
-        history = {}
+    history = history or {}
+    history = defaultdict(list, history)
+
+    total_steps = history.get("total_steps", [0])[-1]
+    total_episodes = history.get("total_episodes", [0])[-1]
 
     for i in range(runs):
-        stats = run_episode(env, agent, train=True, render=False)
+        stats = run_episode(env, agent, **kwargs)
 
         #       Update history object
         for k, v in stats.items():
-            if k not in history.keys():
-                history[k] = []
             history[k].append(v)
 
-        for ax, stat_name in zip(axs, plot_stats):
-            ax.clear()
-            sns.lineplot(x=np.arange(len(history[stat_name])), y=history[stat_name], ax=ax)
-            ax.set_title(stat_name)
-        display.display(fig)
-        display.clear_output(wait=True)
+        # record total steps per game
+        total_steps += history["steps_per_game"][-1]
+        history["total_steps"].append(total_steps)
+        total_episodes += 1
+        history["total_episodes"].append(total_episodes)
 
-    #         print(f"episode {i}/{runs} | {stats}")
+        if plot_stats:
+            if i % plot_period == 0:
+                for ax, stat_name in zip(axs, plot_stats):
+                    ax.clear()
+                    # print(stat_name, len(history[stat_name]))
+                    if x_plot is None:
+                        sns.lineplot(
+                            x=np.arange(len(history[stat_name])), y=history[stat_name], ax=ax
+                        )
+                    else:
+                        sns.lineplot(x=history[x_plot], y=history[stat_name], ax=ax)
+                    ax.set_title(stat_name)
+                display.display(fig)
+                display.clear_output(wait=True)
+        else:
+            print(f"episode {i}/{runs} | {stats}", )
     return history
 
 
@@ -146,4 +166,4 @@ def load_history(path):
 
 def save_history(history, path):
     import json
-    json.dump(str(history), open(path), 'w')
+    json.dump(str(history), open(path, 'w'))

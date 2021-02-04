@@ -12,6 +12,7 @@ class SampleBatch:
     NEXT_OBS = "new_obs"
     ACTIONS = "actions"
     REWARDS = "rewards"
+    RETURNS = "returns"
     PREV_ACTIONS = "prev_actions"
     PREV_REWARDS = "prev_rewards"
     DONES = "dones"

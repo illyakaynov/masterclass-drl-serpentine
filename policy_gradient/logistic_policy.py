@@ -3,7 +3,7 @@ import numpy as np
 
 class LogisticPolicy:
     def __init__(self, params, lr, gamma):
-        # Initialize paramters θ, learning rate α and discount factor γ
+        # Initialize paramters, learning rate and discount factor
 
         self.params = params
         self.lr = lr
@@ -14,7 +14,7 @@ class LogisticPolicy:
 
         return 1 / (1 + np.exp(-y))
 
-    def probs(self, x):
+    def action_probs(self, x):
         # returns probabilities of two actions
 
         y = x @ self.params
@@ -25,7 +25,7 @@ class LogisticPolicy:
     def act(self, x):
         # sample an action in proportion to probabilities
 
-        probs = self.probs(x)
+        probs = self.action_probs(x)
         action = np.random.choice([0, 1], p=probs)
 
         return action, probs[action]
@@ -33,7 +33,7 @@ class LogisticPolicy:
     def grad_log_p(self, x):
         # calculate grad-log-probs
 
-        y = x @ self.params
+        y = np.dot(x, self.params)
         grad_log_p0 = x - x * self.logistic(y)
         grad_log_p1 = -x * self.logistic(y)
 
@@ -42,7 +42,7 @@ class LogisticPolicy:
     def grad_log_p_dot_rewards(self, grad_log_p, actions, discounted_rewards):
         # dot grads with future rewards for each action in episode
 
-        return grad_log_p.T @ discounted_rewards
+        return np.dot(grad_log_p.T, discounted_rewards)
 
     def discount_rewards(self, rewards):
         # calculate temporally adjusted, discounted rewards
@@ -72,6 +72,7 @@ class LogisticPolicy:
         # gradient ascent on parameters
         self.params += self.lr * dot
 
+
 def run_episode(env, policy, render=False):
 
     observation = env.reset()
@@ -98,12 +99,28 @@ def run_episode(env, policy, render=False):
         actions.append(action)
         probs.append(prob)
 
-    return totalreward, np.array(rewards), np.array(observations), np.array(actions), np.array(probs)
+    return (
+        totalreward,
+        np.array(rewards),
+        np.array(observations),
+        np.array(actions),
+        np.array(probs),
+    )
 
-def train(params, lr, gamma, policy, MAX_EPISODES=1000, seed=None, evaluate=False):
+
+def train(
+    env,
+    params,
+    lr,
+    gamma,
+    policy,
+    MAX_EPISODES=1000,
+    seed=None,
+    evaluate=False,
+    video_folder="",
+):
 
     # initialize environment and policy
-    env = gym.make('CartPole-v0')
     if seed is not None:
         env.seed(seed)
     episode_rewards = []
@@ -111,6 +128,7 @@ def train(params, lr, gamma, policy, MAX_EPISODES=1000, seed=None, evaluate=Fals
 
     # train until MAX_EPISODES
     import time
+
     for i in range(MAX_EPISODES):
         # time.sleep(0.1)
         # env.render()
@@ -122,16 +140,23 @@ def train(params, lr, gamma, policy, MAX_EPISODES=1000, seed=None, evaluate=Fals
 
         # update policy
         policy.update(rewards, observations, actions)
-        print("EP: " + str(i) + " Score: " + str(total_reward) + " ",end="\r", flush=False)
+        print(
+            "EP: " + str(i) + " Score: " + str(total_reward) + " ",
+            end="\r",
+            flush=False,
+        )
 
     # evaluation call after training is finished - evaluate last trained policy on 100 episodes
     if evaluate:
-        env = Monitor(env, 'pg_cartpole/', video_callable=True, force=True)
+        env = Monitor(
+            env, video_folder, video_callable=True, force=True
+        )
         for _ in range(100):
             run_episode(env, policy, render=False)
         env.env.close()
 
     return episode_rewards, policy
+
 
 if __name__ == "__main__":
     # additional imports for saving and loading a trained policy
@@ -142,15 +167,21 @@ if __name__ == "__main__":
     # for reproducibility
     GLOBAL_SEED = 0
     np.random.seed(GLOBAL_SEED)
+    env = gym.make("CartPole-v0")
 
-    episode_rewards, policy = train(params=np.random.rand(4),
-                                    lr=0.002,
-                                    gamma=0.99,
-                                    policy=LogisticPolicy,
-                                    MAX_EPISODES=2000,
-                                    seed=GLOBAL_SEED,
-                                    evaluate=False)
+    episode_rewards, policy = train(
+        env,
+        params=np.random.rand(4),
+        lr=0.002,
+        gamma=0.99,
+        policy=LogisticPolicy,
+        MAX_EPISODES=2000,
+        seed=GLOBAL_SEED,
+        evaluate=False,
+        video_folder="Experiments/logistic_pg_cartpole/",
+    )
 
     import matplotlib.pyplot as plt
+
     plt.plot(episode_rewards)
     plt.show()

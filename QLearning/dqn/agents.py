@@ -12,7 +12,10 @@ class Agent:
     Interface for the agent class
     """
 
-    def compute_action(self, state):
+    def __init__(self):
+        self.stats = {}
+
+    def compute_action(self, obs):
         ...
 
     def update(self, *args, **kwargs):
@@ -28,11 +31,11 @@ class RandomAgent(Agent):
         self.n_actions = n_actions
         self.epsilon = 1.0
 
-    def compute_action(self, state):
+    def compute_action(self, obs):
         return random.randrange(self.n_actions)
 
 
-class EpsilonGreedyAgent(RandomAgent):
+class EpsilonGreedyAgent(Agent):
     def __init__(self,
                  n_actions,
                  network=None,
@@ -48,8 +51,8 @@ class EpsilonGreedyAgent(RandomAgent):
                  save_best=False,
                  save_interval=None,
                  ):
-        super().__init__(n_actions)
 
+        self.n_actions = n_actions
         self.network = network
 
         self.replay_buffer = ReplayBuffer(replay_capacity)
@@ -76,7 +79,7 @@ class EpsilonGreedyAgent(RandomAgent):
         self.save_best = save_best
         self.save_interval = save_interval
 
-    def compute_action(self, state):
+    def compute_action(self, obs):
         """
         Given the state return the action following epsilon-greedy strategy
         :param
@@ -89,16 +92,18 @@ class EpsilonGreedyAgent(RandomAgent):
             raise ValueError()
 
         # When state is missing the batch dimension add it
-        if len(state.shape) == 3 or len(state.shape) == 1:
-            state = np.expand_dims(state, axis=0)
+        if len(obs.shape) == 3 or len(obs.shape) == 1:
+            obs = np.expand_dims(obs, axis=0)
 
         if np.random.rand() < self.epsilon:
-            return super().compute_action(state)
+            action = np.random.randint(self.n_actions)
         else:
-            action = self.network.get_best_action(state)
+            action = self.network.get_best_action(obs)
             # Since this get_best_action() returns a tensor
             # we convert it to numpy and then to the Python int
-            return action.numpy().item()
+            action = action.numpy().item()
+
+        return action
 
     def update(self, current_state, action, reward, next_state, is_terminal):
         """
@@ -136,7 +141,7 @@ class EpsilonGreedyAgent(RandomAgent):
         """
         stats = {}
         # Save the best model so far
-        if self.save_best and self.return_ > self.best_return:
+        if self.save_best and self.return_ > self.best_return and self.runs > 200:
             self.best_return = self.return_
             self.save_model(join(self.root_folder, 'best'))
 

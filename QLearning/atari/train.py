@@ -9,6 +9,7 @@ import seaborn as sns
 # %matplotlib inline
 import time
 
+from collections import defaultdict
 
 # Define loop for one episode
 def run_episode(env, agent, train=False, max_steps=100_000, render=False, sleep=0.1):
@@ -52,17 +53,15 @@ def run_episode(env, agent, train=False, max_steps=100_000, render=False, sleep=
         steps += 1
 
     # Call to clear internal agent statistics (reward, return, etc.)
-    loss = agent.finalize_episode()
+    stats = agent.finalize_episode()
+    env.close()
 
     total_time = time.time() - start_timer
-    return {
-        "score": score,
-        "steps_per_game": steps,
-        "framerate": steps / (total_time + 1e-6),
-        "loss": loss,
-        "epsilon": agent.exploration.epsilon,
-        "time_per_game": total_time,
-    }
+    return {'score': score,
+            'steps_per_game': steps,
+            'framerate': steps / (total_time + 1e-6),
+            **stats
+            }
 
 
 # Define loop for multiple episodes
@@ -72,7 +71,7 @@ def run_experiment(
     runs=100,
     x_plot=None,
     plot_stats=None,
-    history={},
+    history=defaultdict(list),
     **kwargs,
 ):
 

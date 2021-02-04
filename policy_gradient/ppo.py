@@ -1,5 +1,4 @@
 import os
-import sys
 from collections import defaultdict
 
 import gym
@@ -8,94 +7,16 @@ import tensorflow as tf
 import tensorflow.keras.backend as K
 from gym.spaces import Box, Discrete
 from memory.sample_batch import SampleBatch, compute_advantages, standardized
-
-# from tensorboardX import SummaryWriter
-from tensorflow.keras import layers, models, optimizers
-
-
-class ClipActionsWrapper(gym.Wrapper):
-    def step(self, action):
-        import numpy as np
-
-        action = np.nan_to_num(action)
-        action = np.clip(action, self.action_space.low, self.action_space.high)
-        return self.env.step(action)
-
-    def reset(self, **kwargs):
-        return self.env.reset(**kwargs)
-
-
-def one_hot_encode(x, max_x):
-    x = x.flatten()
-    x_one_hot = np.zeros((x.size, max_x))
-    x_one_hot[np.arange(x.size), x] = 1
-    return x_one_hot
-
-
-def compute_log_p_gaussian(x, means_and_log_stds):
-    means, log_stds = tf.split(means_and_log_stds, 2, axis=1)
-    std = tf.exp(log_stds)
-    return (
-        -0.5
-        * tf.reduce_sum(tf.math.square((tf.cast(x, tf.float32) - means) / std), axis=1)
-        - 0.5 * np.log(2.0 * np.pi) * tf.cast(tf.shape(x)[1], tf.float32)
-        - tf.reduce_sum(log_stds, axis=1)
-    )
-
-
-def compute_log_p_discrete(action_one_hot, action_prob):
-    return -tf.keras.losses.categorical_crossentropy(
-        action_one_hot, action_prob, from_logits=False
-    )
-
-
-def compute_entropy_discrete(action_prob):
-    return tf.reduce_mean(
-        -tf.reduce_sum(
-            (action_prob * tf.math.log(action_prob + 1e-10)),
-            axis=1,
-        )
-    )
-
-
-def compute_entropy_gaussian(means_and_log_stds):
-    means, log_stds = tf.split(means_and_log_stds, 2, axis=1)
-    return tf.reduce_sum(log_stds + 0.5 * np.log(2.0 * np.pi * np.e), axis=1)
-
-
-def build_critic_network(obs_shape, num_dim=(64, 64), act_f="tanh"):
-    state_input = layers.Input(shape=obs_shape, dtype=tf.float32)
-    x = state_input
-    for i, dim in enumerate(num_dim):
-        x = layers.Dense(dim, activation=act_f, name=f"hidden_{i}")(x)
-
-    out_value = layers.Dense(1, name="output")(x)
-
-    model = models.Model(inputs=state_input, outputs=out_value, name="critic")
-    model.summary()
-    return model
-
-
-def build_actor_network(
-    obs_shape, n_outputs, num_dim=(64, 64), act_f="tanh", output_act_f="softmax"
-):
-    state_input = layers.Input(shape=obs_shape, dtype=tf.float32)
-
-    x = state_input
-    for i, dim in enumerate(num_dim):
-        x = layers.Dense(
-            dim,
-            activation=act_f,
-            name=f"hidden_{i}",
-            kernel_initializer=tf.keras.initializers.RandomNormal(stddev=0.01),
-        )(x)
-
-    out_actions = layers.Dense(n_outputs, activation=output_act_f, name="output")(x)
-
-    model = models.Model(inputs=state_input, outputs=out_actions, name="actor")
-    model.summary()
-    return model
-
+from policy_gradient.cartpole_continuous import ClipActionsWrapper
+from policy_gradient.networks import build_actor_network, build_critic_network
+from policy_gradient.utis import (
+    compute_entropy_discrete,
+    compute_entropy_gaussian,
+    compute_log_p_discrete,
+    compute_log_p_gaussian,
+    one_hot_encode,
+)
+from tensorflow.keras import optimizers
 
 default_config = dict(
     logdir="default",
@@ -124,6 +45,8 @@ default_config = dict(
 )
 
 import yaml
+
+
 class PPOAgent:
     def __init__(self, config=None):
         config = config or {}
@@ -132,7 +55,7 @@ class PPOAgent:
 
         self.logdir = config["logdir"]
         os.makedirs(self.logdir, exist_ok=True)
-        yaml.dump(config, open(os.path.join(self.logdir, 'config.yaml'), 'w'))
+        yaml.dump(config, open(os.path.join(self.logdir, "config.yaml"), "w"))
 
         writer = tf.summary.create_file_writer(self.logdir)
         writer.set_as_default()
@@ -189,7 +112,6 @@ class PPOAgent:
 
         self.actor_optimizer = optimizers.Adam(self.lr, epsilon=1e-5)
         self.critic_optimizer = optimizers.Adam(self.lr, epsilon=1e-5)
-
 
     def _compute_action_discrete(self, obs):
         action_probs = self.actor.predict(obs[None, :])
