@@ -5,6 +5,8 @@ import numpy as np
 
 from typing import List
 
+import tensorflow as tf
+
 
 class SampleBatch:
     OBS = "obs"
@@ -23,8 +25,6 @@ class SampleBatch:
     ACTION_DIST_INPUTS = "action_dist_inputs"
     ACTION_PROB = "action_prob"
     ACTION_LOGP = "action_logp"
-
-    MEANS_AND_LOG_STDS = 'means_and_log_stds'
 
     # Uniquely identifies an episode.
     EPS_ID = "eps_id"
@@ -253,7 +253,7 @@ def discount_cumsum(x: np.ndarray, gamma: float) -> float:
     return scipy.signal.lfilter([1], [1, float(-gamma)], x[::-1], axis=0)[::-1]
 
 
-def standardized(array):
+def np_standardized(array):
     """Normalize the values in an array.
 
     Args:
@@ -263,3 +263,7 @@ def standardized(array):
         array with zero mean and unit standard deviation.
     """
     return (array - array.mean()) / max(1e-4, array.std())
+
+@tf.function
+def tf_standardized(tensor):
+    return tensor - tf.reduce_mean(tensor, 0) / (tf.maximum(1e-7, tf.math.reduce_std(tensor, 0)))

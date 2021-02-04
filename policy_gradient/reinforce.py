@@ -14,11 +14,11 @@ from policy_gradient.memory.sample_batch import (
     SampleBatch,
     compute_advantages,
     discount_cumsum,
-    standardized,
+    np_standardized,
 )
 from policy_gradient.cartpole_continuous import ClipActionsWrapper, ContinuousCartPoleEnv
 from policy_gradient.networks import build_actor_network, build_critic_network
-from policy_gradient.utis import (
+from policy_gradient.utils import (
     compute_entropy_discrete,
     compute_entropy_gaussian,
     compute_log_p_discrete,
@@ -208,7 +208,7 @@ class ReinforceAgent:
                 actions_old = one_hot_encode(actions_old, self.num_outputs)
 
             returns = train_batch[SampleBatch.RETURNS].astype("float32")
-            returns = standardized(returns.squeeze())
+            returns = np_standardized(returns.squeeze())
             actor_loss, entropy_bonus = self.train_op(obs, actions_old, returns)
 
             epoch_actor_loss.append(actor_loss.numpy())
