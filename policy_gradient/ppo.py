@@ -1,50 +1,78 @@
 import os
 from collections import defaultdict
+from os.path import join
 
 import gym
 import numpy as np
+import seaborn as sns
 import tensorflow as tf
 import tensorflow.keras.backend as K
+import yaml
 from gym.spaces import Box, Discrete
-from memory.sample_batch import (
+from IPython.core import display
+from matplotlib import pyplot as plt
+from policy_gradient.action_dist import CategoricalDistribution, GaussianDistribution
+from policy_gradient.cartpole_continuous import (
+    ClipActionsWrapper,
+    ContinuousCartPoleEnv,
+)
+from policy_gradient.memory.sample_batch import (
     SampleBatch,
     compute_advantages,
     tf_standardized,
 )
-from policy_gradient.cartpole_continuous import ClipActionsWrapper, ContinuousCartPoleEnv
 from policy_gradient.networks import build_actor_network, build_critic_network
-
 from tensorflow.keras import optimizers
 
-from policy_gradient.action_dist import CategoricalDistribution, GaussianDistribution
-
 default_config = dict(
-    logdir="default",
+    # Folder where to save files related to the run
+    logdir=join("Experiments", "ppo_default"),
+    # True to use tensorboard for logging
+    use_tensorboard=False,
+    # True to perform non-deterministic during an episode
     explore=True,
+    # PPO clip parameter
     clip_value=0.2,
+    # Discount for rewards
     gamma=0.99,
-    num_sgd_iter=6,
+    # Number of iterations
+    num_iter=6,
+    # Number of epoch per iteration
     num_epochs=20,
-    sgd_minibatch_size=128,
+    # Size of the training batch
     train_batch_size=4000,
-    num_dim_critic=(64, 64),
-    act_f_critic="tanh",
+    # Size of the mini-batch
+    sgd_minibatch_size=128,
+    # Dimensions of the dense layers of the actor network
     num_dim_actor=(64, 64),
+    # Activation function of the dense layers of the actor network
     act_f_actor="tanh",
-    vf_share_layers=False,
+    # Dimensions of the dense layers of the critic network
+    num_dim_critic=(64, 64),
+    # Activation function of the dense layers of the critic network
+    act_f_critic="tanh",
+    # Entropy coefficient, used to control exploration
     entropy_coeff=1e-5,
+    # Learning rate
     lr=0.01,
+    # Coefficient of the value function loss.
     vf_loss_coeff=1.0,
+    # Clip param for the value function. Note that this is sensitive to the
+    # scale of the rewards. If your expected V is large, increase this.
     vf_clip_param=10.0,
+    # If specified, clip the global norm of gradients by this amount.
     clip_gradients_by_norm=None,
+    # Should use a critic as a baseline (otherwise don't use value baseline;
+    # required for using GAE).
     use_critic=True,
+    # If true, use the Generalized Advantage Estimator (GAE)
+    # with a value function, see https://arxiv.org/pdf/1506.02438.pdf.
     use_gae=True,
-    standardize_advantages=True,
+    # The GAE(lambda) parameter.
     gae_lambda=1.0,
-    num_eval_episodes=1,
+    # True to normalize the returns (0 mean, 1 variance) on the mini-batch level
+    standardize_advantages=True,
 )
-
-import yaml
 
 
 class PPOAgent:
@@ -52,13 +80,6 @@ class PPOAgent:
         config = config or {}
 
         self.config = config = {**default_config, **config}
-
-        self.logdir = config["logdir"]
-        os.makedirs(self.logdir, exist_ok=True)
-        yaml.dump(config, open(os.path.join(self.logdir, "config.yaml"), "w"))
-
-        writer = tf.summary.create_file_writer(self.logdir)
-        writer.set_as_default()
 
         self.env = config["env_or_env_name"]
         if isinstance(self.env, str):
@@ -78,7 +99,7 @@ class PPOAgent:
         self.train_batch_size = config["train_batch_size"]
         self.sgd_minibatch_size = config["sgd_minibatch_size"]
         self.num_epochs = config["num_epochs"]
-        self.num_sgd_iter = config["num_sgd_iter"]
+        self.num_iter = config["num_iter"]
 
         self.gamma = config["gamma"]
         self.lr = config["lr"]
@@ -96,8 +117,6 @@ class PPOAgent:
         self.gae_lambda = config["gae_lambda"]
         self.standardize_advantages = config["standardize_advantages"]
 
-        self.num_eval_episodes = config["num_eval_episodes"]
-
         self.actor = build_actor_network(
             obs_shape=self.env.observation_space.shape,
             n_outputs=self.num_outputs,
@@ -114,6 +133,18 @@ class PPOAgent:
 
         self.actor_optimizer = optimizers.Adam(self.lr, epsilon=1e-5)
         self.critic_optimizer = optimizers.Adam(self.lr, epsilon=1e-5)
+
+        self.logdir = config["logdir"]
+        self.use_tensorboard = config["use_tensorboard"]
+
+        os.makedirs(self.logdir, exist_ok=True)
+        yaml.dump(config, open(os.path.join(self.logdir, "config.yaml"), "w"))
+
+        if self.use_tensorboard:
+            writer = tf.summary.create_file_writer(self.logdir)
+            writer.set_as_default()
+
+        self.total_iters = 0
 
     def compute_action(self, obs):
         action_dist_input = self.actor(obs[None, ...])
@@ -135,6 +166,7 @@ class PPOAgent:
 
         obs = self.env.reset()
         done = False
+        score = 0
         while not done:
             action, log_p, action_dist_input = self.compute_action(obs)
             next_obs, reward, done, info = self.env.step(action)
@@ -147,19 +179,22 @@ class PPOAgent:
             traj_dict[SampleBatch.ACTION_LOGP].append(log_p)
 
             obs = next_obs
+            score += reward
         sample_batch = SampleBatch(traj_dict)
 
         if self.use_critic:
-            sample_batch[SampleBatch.VF_PREDS] = agent.critic.predict(
+            sample_batch[SampleBatch.VF_PREDS] = self.critic.predict(
                 sample_batch[SampleBatch.OBS]
             )
-        return sample_batch
+        return sample_batch, score
 
     def sample_batch(self):
         samples = []
-        num_samples = 0
-        while num_samples < self.train_batch_size:
-            trajectory = self.sample_trajectory()
+        scores = []
+        num_episodes = 0
+        num_steps = 0
+        while num_steps < self.train_batch_size:
+            trajectory, score = self.sample_trajectory()
             trajectory = compute_advantages(
                 trajectory,
                 last_r=0,
@@ -168,11 +203,23 @@ class PPOAgent:
                 use_critic=self.use_critic,
                 use_gae=self.use_gae,
             )
-            num_samples += trajectory.count
+            num_steps += trajectory.count
+            num_episodes += 1
+            scores.append(score)
             samples.append(trajectory)
-        return SampleBatch.concat_samples(samples)
 
-    @tf.function
+        batch_stats = dict(
+            num_episodes=num_episodes,
+            num_steps=num_steps,
+            mean_steps_per_episode=num_steps / num_episodes,
+            mean_score=np.mean(scores),
+            min_score=np.min(scores),
+            max_score=np.max(scores),
+        )
+
+        return SampleBatch.concat_samples(samples), batch_stats
+
+    # @tf.function
     def train_batch_critic(self, obs_batch, value_target_batch, old_value_pred_batch):
         with tf.GradientTape() as tape:
             value_fn_out = self.critic(obs_batch)
@@ -195,13 +242,6 @@ class PPOAgent:
             zip(critic_gradients, self.critic.trainable_variables)
         )
 
-        # for i in range(len(self.actor.trainable_variables)):
-        #     tf.summary.histogram(
-        #         f"actor_weights_{i}",
-        #         self.actor.trainable_variables[i],
-        #         step=self.total_epochs,
-        #     )
-
         return critic_loss
 
     @tf.function
@@ -221,11 +261,9 @@ class PPOAgent:
                 * advantage_batch
             )
 
-            entropy_bonus = tf.reduce_mean(action_dist.entropy())
-            actor_loss = -(
-                tf.reduce_mean(tf.minimum(surrogate, surrogate_cliped))
-                + self.entropy_coeff * entropy_bonus
-            )
+            mean_entropy = tf.reduce_mean(action_dist.entropy())
+            policy_loss = -tf.reduce_mean(tf.minimum(surrogate, surrogate_cliped))
+            actor_loss = policy_loss - self.entropy_coeff * mean_entropy
 
         actor_gradients = tape.gradient(actor_loss, self.actor.trainable_variables)
         if self.clip_gradients_by_norm:
@@ -236,25 +274,29 @@ class PPOAgent:
             zip(actor_gradients, self.actor.trainable_variables)
         )
 
-        # for i in range(len(actor_gradients)):
-        #     tf.summary.histogram(
-        #         f"actor_gradient_{i}",
-        #         actor_gradients[i],
-        #         step=self.total_epochs,
-        #     )
+        return policy_loss, mean_entropy, actor_loss
 
-        return actor_loss, entropy_bonus
+    def run(self, num_iter=None, plot_stats=None, plot_period=1, history=None):
+        # initialize plots
+        if plot_stats:
+            num_plots = len(plot_stats)
+            fig, axs = plt.subplots(
+                num_plots, 1, squeeze=False, figsize=(10, 5 * num_plots)
+            )
+            axs = axs.ravel()
 
-    def run(self):
+        # initialize history dict
+        history = history or {}
+        history = defaultdict(list, history)
 
-        history = defaultdict(list)
+        total_steps = history.get("total_steps", [0])[-1]
+        total_episodes = history.get("total_episodes", [0])[-1]
 
-        while self.sgd_iters < self.num_sgd_iter:
-            epoch_actor_loss = []
-            epoch_critic_loss = []
-            epoch_entropy = []
+        num_iter = num_iter or self.num_iter
+        for i in range(num_iter):
+            stats = defaultdict(list)
 
-            train_batch = self.sample_batch()
+            train_batch, train_batch_stats = self.sample_batch()
 
             obs = train_batch[SampleBatch.OBS]
             actions_old = train_batch[SampleBatch.ACTIONS]
@@ -286,102 +328,112 @@ class PPOAgent:
                 old_value_pred_batch,
             ) in dataset:
 
-                critic_loss = self.train_batch_critic(
-                    obs_batch, value_target_batch, old_value_pred_batch
-                )
+                critic_loss = 0
+                if self.use_critic:
+                    critic_loss = self.train_batch_critic(
+                        obs_batch, value_target_batch, old_value_pred_batch
+                    )
 
-                actor_loss, entropy_bonus = self.train_actor_batch(
+                policy_loss, mean_entropy, actor_loss = self.train_actor_batch(
                     obs_batch, action_old_batch, action_old_log_p_batch, advantage_batch
                 )
+                stats["policy_loss"].append(policy_loss.numpy().item())
+                stats["mean_entropy"].append(mean_entropy.numpy().item())
+                stats["actor_loss"].append(actor_loss.numpy().item())
+                stats["critic_loss"].append(critic_loss.numpy().item())
 
-                epoch_critic_loss.append(critic_loss)
-                epoch_actor_loss.append(actor_loss)
-                epoch_entropy.append(entropy_bonus)
+            mean_stats = {k: np.mean(v) for k, v in stats.items()}
+            mean_stats = dict(**mean_stats, **train_batch_stats)
+            # record total steps per game and episodes per iteration
+            total_steps += mean_stats["num_steps"]
+            total_episodes += mean_stats["num_episodes"]
+            mean_stats["total_steps"] = total_steps
+            mean_stats["total_episodes"] = total_episodes
 
-            history["actor_loss"].append(np.mean(epoch_actor_loss))
-            history["critic_loss"].append(np.mean(epoch_critic_loss))
-            history["entropy"].append(np.mean(epoch_entropy))
+            for k, v in mean_stats.items():
+                history[k].append(v)
+                if self.use_tensorboard:
+                    tf.summary.scalar(k, v, self.total_iters)
 
-            tf.summary.scalar("Actor loss", history["actor_loss"][-1], self.sgd_iters)
-            tf.summary.scalar("Critic loss", history["critic_loss"][-1], self.sgd_iters)
-            tf.summary.scalar("Entropy", history["entropy"][-1], self.sgd_iters)
+            if plot_stats:
+                if (i + 1) % plot_period == 0:
+                    for ax, stat_name in zip(axs, plot_stats):
+                        ax.clear()
+                        if isinstance(stat_name, str):
+                            stat_name = [stat_name]
+                        for s in stat_name:
+                            sns.lineplot(
+                                x=np.arange(len(history[s])),
+                                y=history[s],
+                                ax=ax,
+                            )
+                        ax.set_title(stat_name)
+                    display.display(fig)
+                    display.clear_output(wait=True)
+            else:
+                print(
+                    f"Iteration: {i+1}/{self.num_iter} | {mean_stats}",
+                )
 
-            print(
-                self.sgd_iters,
-                history["actor_loss"][-1],
-                history["critic_loss"][-1],
-            )
-            self.sgd_iters += 1
-
-            val_score = np.mean(
-                [
-                    run_episode(self.env, self, monitor=False, logdir=self.logdir)
-                    for i in range(self.num_eval_episodes)
-                ]
-            )
-            tf.summary.scalar("Validation Score", val_score, self.sgd_iters)
-            history["score"].append(val_score)
-            print(val_score)
+            self.total_iters += 1
 
         return history
 
 
-def run_episode(env, agent, monitor=True, logdir=None):
-    done = False
-    score = 0
+def run_episode(env, agent):
+    try:
+        done = False
+        score = 0
 
-    if monitor:
-        env = Monitor(
-            env,
-            logdir,
-            video_callable=lambda x: True,
-            force=True,
-        )
-
-    obs = env.reset()
-    while not done:
-        action, __, __ = agent.compute_action(obs)
-        obs, reward, done, info = env.step(action)
-        score += reward
-    env.close()
+        obs = env.reset()
+        while not done:
+            action, __, __ = agent.compute_action(obs)
+            obs, reward, done, info = env.step(action)
+            score += reward
+    except Exception as e:
+        raise e
+    finally:
+        env.close()
     return score
 
 
 if __name__ == "__main__":
     agent = PPOAgent(
         config=dict(
-            # env_or_env_name="LunarLanderContinuous-v2",
-            env_or_env_name=ContinuousCartPoleEnv(),
-            logdir=os.path.join("lunarlander_continuous", "action_dist"),
+            env_or_env_name="LunarLanderContinuous-v2",
+            logdir=join("Experiments", "ppo_default"),
+            use_tensorboard=False,
             explore=True,
-            continuous=False,
             clip_value=0.2,
             gamma=0.99,
-            num_sgd_iter=100,
-            num_epochs=30,
-            sgd_minibatch_size=128,
+            num_iter=6,
+            num_epochs=20,
             train_batch_size=4000,
-            num_dim_critic=[64, 64, 128],
-            act_f_critic="relu",
-            num_dim_actor=[64, 64, 128],
+            sgd_minibatch_size=128,
+            num_dim_actor=(64, 64, 128),
             act_f_actor="tanh",
-            vf_share_layers=False,
+            num_dim_critic=(64, 64, 128),
+            act_f_critic="tanh",
             entropy_coeff=1e-3,
             lr=0.00025,
             vf_loss_coeff=1.0,
-            clip_gradients_by_norm=None,
+            vf_clip_param=10.0,
+            clip_gradients_by_norm=0.5,
+            use_critic=True,
+            use_gae=True,
+            gae_lambda=1.0,
+            standardize_advantages=True,
         )
     )
     from gym.wrappers import Monitor
 
     history = agent.run()
-    from matplotlib import pyplot as plt
-
-    plt.plot(history["score"])
-    plt.plot(history["actor_loss"])
-    plt.plot(history["critic_loss"])
-    plt.show()
-
+    #
+    # plt.plot(history["mean_score"])
+    # plt.plot(history["min_score"])
+    # plt.plot(history["max_score"])
+    # plt.show()
+    pass
     # from time import time
     #
     # start = time()

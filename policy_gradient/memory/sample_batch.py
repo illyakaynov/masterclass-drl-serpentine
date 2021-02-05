@@ -255,6 +255,6 @@ def np_standardized(array):
     """
     return (array - array.mean()) / max(1e-4, array.std())
 
-@tf.function
+# @tf.function
 def tf_standardized(tensor):
-    return tensor - tf.reduce_mean(tensor, 0) / (tf.maximum(1e-7, tf.math.reduce_std(tensor, 0)))
+    return (tensor - tf.reduce_mean(tensor, 0)) / (tf.maximum(1e-7, tf.math.reduce_std(tensor, 0)))

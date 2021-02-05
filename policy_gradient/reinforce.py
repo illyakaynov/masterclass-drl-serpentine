@@ -3,6 +3,7 @@ from collections import defaultdict
 from os.path import join
 
 import gym
+import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import tensorflow as tf
@@ -24,19 +25,27 @@ from policy_gradient.networks import build_actor_network
 from tensorflow.keras import optimizers
 
 DEFAULT_CONFIG = dict(
+    # Folder where to save files related to the run
     logdir=join("Experiments", "pg_default"),
+    # True to use tensorboard for logging
     use_tensorboard=False,
+    # True to perform non-deterministic during an episode
     explore=True,
+    # Discount for rewards
     gamma=0.99,
+    # Number of episodes to run the algorithm
     num_episodes=20,
-    train_batch_size=4000,
+    # Dimensions of the dense layers of the network
     num_dim_actor=(64, 64),
+    # Activation function in dense layers
     act_f_actor="tanh",
+    # Entropy coefficient, used to control exploration
     entropy_coeff=1e-5,
+    # Learning rate for the neural network optimizer
     lr=0.01,
+    # If specified, clip the global norm of gradients by this amount.
     clip_gradients_by_norm=None,
-    num_eval_episodes=1,
-    eval_monitor=False,
+    # True to normalize the returns (0 mean, 1 variance) on the batch level
     standardize_return=True,
 )
 
@@ -89,11 +98,9 @@ class ReinforceAgent:
         yaml.dump(config, open(os.path.join(self.logdir, "config.yaml"), "w"))
 
         # setup tensorboard writer
-        writer = tf.summary.create_file_writer(self.logdir)
-        writer.set_as_default()
-
-        self.num_eval_episodes = config["num_eval_episodes"]
-        self.eval_monitor = config["eval_monitor"]
+        if self.use_tensorboard:
+            writer = tf.summary.create_file_writer(self.logdir)
+            writer.set_as_default()
 
         self.total_episodes = 0
 
@@ -178,7 +185,7 @@ class ReinforceAgent:
         )
         return policy_loss, total_loss, mean_entropy
 
-    def run(self, num_episodes=None, plot_stats=None, plot_period=1):
+    def run(self, num_episodes=None, plot_stats=None, plot_period=1, history=None):
         # initialize plots
         if plot_stats:
             num_plots = len(plot_stats)
@@ -188,7 +195,8 @@ class ReinforceAgent:
             axs = axs.ravel()
 
         # initialize history dict
-        history = defaultdict(list)
+        history = history or {}
+        history = defaultdict(list, history)
 
         num_episodes = num_episodes or self.num_episodes
         for i in range(num_episodes):
@@ -204,21 +212,25 @@ class ReinforceAgent:
             # normalize returns on the batch level
             returns = np_standardized(returns.squeeze())
             # perform gradient descent
-            policy_loss, total_loss, entropy_bonus = self.train_op(obs, actions_old, returns)
+            policy_loss, total_loss, entropy_bonus = self.train_op(
+                obs, actions_old, returns
+            )
             # record statistics
-            stats["loss"] = policy_loss.numpy().item()
+            stats["policy_loss"] = policy_loss.numpy().item()
             stats["entropy"] = entropy_bonus.numpy().item()
+            stats["total_loss"] = total_loss.numpy().item()
             stats["score"] = score
             stats["steps_per_episode"] = len(train_batch)
 
             for k, v in stats.items():
-                tf.summary.scalar(k, v, self.total_episodes) if self.use_tensorboard else ...
                 history[k].append(v)
+                if self.use_tensorboard:
+                    tf.summary.scalar(k, v, self.total_episodes)
 
             self.total_episodes += 1
 
             if plot_stats:
-                if i % plot_period == 0:
+                if (i + 1) % plot_period == 0:
                     for ax, stat_name in zip(axs, plot_stats):
                         ax.clear()
                         # print(stat_name, len(history[stat_name]))
@@ -241,50 +253,76 @@ class ReinforceAgent:
         return history
 
 
-def run_episode(env, agent, monitor=True, logdir=None):
-    done = False
-    score = 0
+def run_episode(env, agent):
+    try:
+        done = False
+        score = 0
 
-    if monitor:
-        env = Monitor(
-            env,
-            logdir,
-            video_callable=lambda x: True,
-            force=True,
-        )
-
-    obs = env.reset()
-    while not done:
-        action, __ = agent.compute_action(obs)
-        obs, reward, done, info = env.step(action)
-        score += reward
-    env.close()
+        obs = env.reset()
+        while not done:
+            action, __, __ = agent.compute_action(obs)
+            obs, reward, done, info = env.step(action)
+            score += reward
+    except Exception as e:
+        raise e
+    finally:
+        env.close()
     return score
 
 
 if __name__ == "__main__":
+    ROOT_DIR = os.path.join("Experiments", "pg_cartpole_continuous")
+
     agent = ReinforceAgent(
         config=dict(
             env_or_env_name=ContinuousCartPoleEnv(),
-            logdir=os.path.join("cartpole_continuous", "first_try"),
+            # env_or_env_name='CartPole-v1',
+            logdir=join("Experiments", "pg_cartpole_continuous"),
+            use_tensorboard=False,
             explore=True,
             gamma=0.99,
-            num_episodes=2000,
-            num_dim_actor=[32, 32],
+            num_episodes=300,
+            num_dim_actor=(32, 32),
             act_f_actor="tanh",
             entropy_coeff=1e-5,
             lr=0.0025,
             clip_gradients_by_norm=None,
+            standardize_return=True,
         )
     )
+    history = {}
+    agent.run()
 
-    history = agent.run()
-    from matplotlib import pyplot as plt
-
-    plt.plot(history["score"])
-    # plt.plot(history["actor_loss"])
-    # plt.plot(history["critic_loss"])
-    plt.show()
+    # def run_episode(env, agent, monitor=True, logdir=None):
+    #     try:
+    #         done = False
+    #         score = 0
+    #
+    #         obs = env.reset()
+    #         while not done:
+    #             action, __, __ = agent.compute_action(obs)
+    #             obs, reward, done, info = env.step(action)
+    #             score += reward
+    #     finally:
+    #         env.close()
+    #     return score
+    #
+    #
+    # from IPython.display import Video
+    # import os
+    # video_path = join(ROOT_DIR, 'video')
+    # eval_env = Monitor(
+    #     agent.env,
+    #     video_path,
+    #     video_callable=lambda x: True,
+    #     force=True,
+    # )
+    #
+    # run_episode(eval_env, agent)
+    #
+    # # take the last element in the folder with .mp4 extension
+    # video_name = [x for x in os.listdir(video_path) if '.mp4' in x][-1]
+    # Video(os.path.join(video_path, video_name))
 
     # from time import time
     #

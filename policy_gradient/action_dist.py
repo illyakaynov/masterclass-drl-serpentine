@@ -7,19 +7,40 @@ class ActionDistribution:
         self.inputs = inputs
 
     def sample(self):
+        """
+        Sample action from a current distribution
+        :return:
+        """
+        raise NotImplemented
+
+    def deterministic_sample(self):
+        """
+        Sample greedily from a current distribution
+        :return:
+        """
         raise NotImplemented
 
     def log_p(self, x):
+        """
+        Calculate log probability ln(pi) of the action under current distribution
+        :param x:
+        :return:
+        """
         raise NotImplemented
 
     def entropy(self):
+        """
+        Calculate the entropy of the current distribution
+        :return:
+        """
         raise NotImplemented
 
 
 class CategoricalDistribution(ActionDistribution):
 
-    # @tf.function
     def log_p(self, x):
+        if len(tf.shape(x)) >= 2:
+            x = tf.squeeze(x)
         return -tf.nn.sparse_softmax_cross_entropy_with_logits(
             logits=self.inputs, labels=tf.cast(x, tf.int32)
         )
