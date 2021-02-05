@@ -204,7 +204,7 @@ def compute_advantages(
         ).astype(np.float32)
     else:
         rewards_plus_v = np.concatenate(
-            [rollout[SampleBatch.REWARDS], np.array([last_r])]
+            [rollout[SampleBatch.REWARDS], np.array([[last_r]])]
         )
         discounted_returns = discount_cumsum(rewards_plus_v, gamma)[:-1].astype(
             np.float32

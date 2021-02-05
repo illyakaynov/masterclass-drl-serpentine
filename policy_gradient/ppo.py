@@ -182,7 +182,7 @@ class PPOAgent:
             score += reward
         sample_batch = SampleBatch(traj_dict)
 
-        if self.use_critic:
+        if True:
             sample_batch[SampleBatch.VF_PREDS] = self.critic.predict(
                 sample_batch[SampleBatch.OBS]
             )
@@ -219,7 +219,7 @@ class PPOAgent:
 
         return SampleBatch.concat_samples(samples), batch_stats
 
-    # @tf.function
+    @tf.function
     def train_batch_critic(self, obs_batch, value_target_batch, old_value_pred_batch):
         with tf.GradientTape() as tape:
             value_fn_out = self.critic(obs_batch)
@@ -328,7 +328,7 @@ class PPOAgent:
                 old_value_pred_batch,
             ) in dataset:
 
-                critic_loss = 0
+                critic_loss = tf.constant([0])
                 if self.use_critic:
                     critic_loss = self.train_batch_critic(
                         obs_batch, value_target_batch, old_value_pred_batch
