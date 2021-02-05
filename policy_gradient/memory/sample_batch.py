@@ -10,17 +10,15 @@ import tensorflow as tf
 
 class SampleBatch:
     OBS = "obs"
-    CUR_OBS = "obs"
-    NEXT_OBS = "new_obs"
     ACTIONS = "actions"
     REWARDS = "rewards"
-    RETURNS = "returns"
-    PREV_ACTIONS = "prev_actions"
-    PREV_REWARDS = "prev_rewards"
     DONES = "dones"
-    INFOS = "infos"
+
+    RETURNS = "returns"
     ADVANTAGES = "advantages"
     VALUE_TARGETS = "value_targets"
+    # Value function predictions emitted by the behaviour policy.
+    VF_PREDS = "vf_preds"
 
     ACTION_DIST_INPUTS = "action_dist_inputs"
     ACTION_PROB = "action_prob"
@@ -28,9 +26,6 @@ class SampleBatch:
 
     # Uniquely identifies an episode.
     EPS_ID = "eps_id"
-
-    # Value function predictions emitted by the behaviour policy.
-    VF_PREDS = "vf_preds"
 
     def __init__(self, *args, **kwargs):
         self.data = dict(*args, **kwargs)
@@ -51,13 +46,6 @@ class SampleBatch:
 
         self.count = len(next(iter(self.data.values())))
         self.new_columns = []
-
-    def size_bytes(self) -> int:
-        """
-        Returns:
-            int: The overall size in bytes of the data buffer (all columns).
-        """
-        return sum(sys.getsizeof(d) for d in self.data.values())
 
     def __getitem__(self, key: str):
         """Returns one column (by key) from the data.
@@ -92,6 +80,9 @@ class SampleBatch:
 
     def __contains__(self, x):
         return x in self.data
+
+    def __len__(self):
+        return len(list(self.data.values())[0])
 
     def concat(self, other: "SampleBatch") -> "SampleBatch":
         """Returns a new SampleBatch with each data column concatenated.

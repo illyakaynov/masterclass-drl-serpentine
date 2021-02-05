@@ -9,18 +9,11 @@ from gym.spaces import Box, Discrete
 from memory.sample_batch import (
     SampleBatch,
     compute_advantages,
-    np_standardized,
     tf_standardized,
 )
-from policy_gradient.cartpole_continuous import ClipActionsWrapper
+from policy_gradient.cartpole_continuous import ClipActionsWrapper, ContinuousCartPoleEnv
 from policy_gradient.networks import build_actor_network, build_critic_network
-from policy_gradient.utils import (
-    compute_entropy_discrete,
-    compute_entropy_gaussian,
-    compute_log_p_discrete,
-    compute_log_p_gaussian,
-    one_hot_encode,
-)
+
 from tensorflow.keras import optimizers
 
 from policy_gradient.action_dist import CategoricalDistribution, GaussianDistribution
@@ -67,9 +60,9 @@ class PPOAgent:
         writer = tf.summary.create_file_writer(self.logdir)
         writer.set_as_default()
 
-        env = config["env_or_env_name"]
-        if isinstance(env, str):
-            self.env = gym.make(env)
+        self.env = config["env_or_env_name"]
+        if isinstance(self.env, str):
+            self.env = gym.make(self.env)
 
         self.continuous = True if isinstance(self.env.action_space, Box) else False
 
@@ -322,7 +315,7 @@ class PPOAgent:
 
             val_score = np.mean(
                 [
-                    run_episode(self.env, self, monitor=True, logdir=self.logdir)
+                    run_episode(self.env, self, monitor=False, logdir=self.logdir)
                     for i in range(self.num_eval_episodes)
                 ]
             )
@@ -357,7 +350,8 @@ def run_episode(env, agent, monitor=True, logdir=None):
 if __name__ == "__main__":
     agent = PPOAgent(
         config=dict(
-            env_or_env_name="LunarLanderContinuous-v2",
+            # env_or_env_name="LunarLanderContinuous-v2",
+            env_or_env_name=ContinuousCartPoleEnv(),
             logdir=os.path.join("lunarlander_continuous", "action_dist"),
             explore=True,
             continuous=False,
