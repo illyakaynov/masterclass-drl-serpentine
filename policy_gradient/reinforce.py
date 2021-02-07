@@ -9,7 +9,6 @@ import seaborn as sns
 import tensorflow as tf
 import yaml
 from gym.spaces import Box
-from gym.wrappers import Monitor
 from IPython.core import display
 from policy_gradient.action_dist import CategoricalDistribution, GaussianDistribution
 from policy_gradient.cartpole_continuous import (
@@ -290,42 +289,4 @@ if __name__ == "__main__":
             standardize_return=True,
         )
     )
-    history = {}
     agent.run()
-
-    # def run_episode(env, agent, monitor=True, logdir=None):
-    #     try:
-    #         done = False
-    #         score = 0
-    #
-    #         obs = env.reset()
-    #         while not done:
-    #             action, __, __ = agent.compute_action(obs)
-    #             obs, reward, done, info = env.step(action)
-    #             score += reward
-    #     finally:
-    #         env.close()
-    #     return score
-    #
-    #
-    # from IPython.display import Video
-    # import os
-    # video_path = join(ROOT_DIR, 'video')
-    # eval_env = Monitor(
-    #     agent.env,
-    #     video_path,
-    #     video_callable=lambda x: True,
-    #     force=True,
-    # )
-    #
-    # run_episode(eval_env, agent)
-    #
-    # # take the last element in the folder with .mp4 extension
-    # video_name = [x for x in os.listdir(video_path) if '.mp4' in x][-1]
-    # Video(os.path.join(video_path, video_name))
-
-    # from time import time
-    #
-    # start = time()
-    # training_batch = sample_batch(env, agent, 200)
-    # print(time() - start)

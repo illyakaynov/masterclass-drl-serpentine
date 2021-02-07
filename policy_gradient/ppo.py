@@ -8,7 +8,7 @@ import seaborn as sns
 import tensorflow as tf
 import tensorflow.keras.backend as K
 import yaml
-from gym.spaces import Box, Discrete
+from gym.spaces import Box
 from IPython.core import display
 from matplotlib import pyplot as plt
 from policy_gradient.action_dist import CategoricalDistribution, GaussianDistribution
@@ -86,7 +86,6 @@ class PPOAgent:
             self.env = gym.make(self.env)
 
         self.continuous = True if isinstance(self.env.action_space, Box) else False
-
         if self.continuous:
             self.num_outputs = self.env.action_space.shape[0] * 2
             self.action_dist_cls = GaussianDistribution
@@ -122,7 +121,7 @@ class PPOAgent:
             n_outputs=self.num_outputs,
             num_dim=config["num_dim_actor"],
             act_f=config["act_f_actor"],
-            output_act_f="linear" if self.continuous else "softmax",
+            output_act_f="linear",
         )
 
         self.critic = build_critic_network(
@@ -167,6 +166,7 @@ class PPOAgent:
         obs = self.env.reset()
         done = False
         score = 0
+        # Run one episode
         while not done:
             action, log_p, action_dist_input = self.compute_action(obs)
             next_obs, reward, done, info = self.env.step(action)
@@ -180,12 +180,21 @@ class PPOAgent:
 
             obs = next_obs
             score += reward
+        # Convert simple dictionary to SampleBatch
         sample_batch = SampleBatch(traj_dict)
-
-        if True:
-            sample_batch[SampleBatch.VF_PREDS] = self.critic.predict(
-                sample_batch[SampleBatch.OBS]
-            )
+        # Compute Value Estimates
+        sample_batch[SampleBatch.VF_PREDS] = self.critic.predict(
+            sample_batch[SampleBatch.OBS]
+        )
+        # Compute Advantages
+        sample_batch = compute_advantages(
+            sample_batch,
+            last_r=0,
+            gamma=self.gamma,
+            lambda_=self.gae_lambda,
+            use_critic=self.use_critic,
+            use_gae=self.use_gae,
+        )
         return sample_batch, score
 
     def sample_batch(self):
@@ -195,14 +204,6 @@ class PPOAgent:
         num_steps = 0
         while num_steps < self.train_batch_size:
             trajectory, score = self.sample_trajectory()
-            trajectory = compute_advantages(
-                trajectory,
-                last_r=0,
-                gamma=self.gamma,
-                lambda_=self.gae_lambda,
-                use_critic=self.use_critic,
-                use_gae=self.use_gae,
-            )
             num_steps += trajectory.count
             num_episodes += 1
             scores.append(score)
@@ -220,56 +221,73 @@ class PPOAgent:
         return SampleBatch.concat_samples(samples), batch_stats
 
     @tf.function
-    def train_batch_critic(self, obs_batch, value_target_batch, old_value_pred_batch):
+    def train_op_critic(self, obs_batch, value_target_batch, old_value_pred_batch):
         with tf.GradientTape() as tape:
+            # Get current value estimates
             value_fn_out = self.critic(obs_batch)
+            # Compute the squared difference
             vf_loss1 = tf.square(value_fn_out - value_target_batch)
+            # Compute clipped vf
             vf_clipped = old_value_pred_batch + tf.clip_by_value(
                 value_fn_out - old_value_pred_batch,
                 -self.vf_clip_param,
                 self.vf_clip_param,
             )
             vf_loss2 = tf.square(vf_clipped - value_target_batch)
+            # Since this value already has appropriate sign take the maximum
             vf_loss = tf.maximum(vf_loss1, vf_loss2)
+            # Calculate critic loss
             critic_loss = tf.reduce_mean(vf_loss) * self.vf_loss_coeff
-
+        # Get the gradients
         critic_gradients = tape.gradient(critic_loss, self.critic.trainable_variables)
+        # Clip gradients by the global l2 norm
         if self.clip_gradients_by_norm:
             critic_gradients, global_norm = tf.clip_by_global_norm(
                 critic_gradients, self.clip_gradients_by_norm
             )
+        # Perform Gradient Descent
         self.critic_optimizer.apply_gradients(
             zip(critic_gradients, self.critic.trainable_variables)
         )
-
         return critic_loss
 
     @tf.function
-    def train_actor_batch(
+    def train_op_actor(
         self, obs_batch, action_old_batch, action_old_log_p_batch, advantage_batch
     ):
         with tf.GradientTape() as tape:
+            # Inference the actor network
             action_dist_input = self.actor(obs_batch)
+            # Create action distribution
             action_dist = self.action_dist_cls(action_dist_input)
+            # Calculate log probability of the old actions under current policy
             log_p = action_dist.log_p(action_old_batch)
-
+            # calculate the importance sampling probability ratio r(\theta)
             prob_ratio = tf.exp(log_p - tf.squeeze(action_old_log_p_batch))
+            # Normalize the advantages (zero mean, unit variance)
             advantage_batch = tf_standardized(tf.squeeze(advantage_batch))
+            # Compute surrogate objective
             surrogate = prob_ratio * advantage_batch
+            # Compute clipped surrogate objective
             surrogate_cliped = (
                 K.clip(prob_ratio, 1 - self.clip_value, 1 + self.clip_value)
                 * advantage_batch
             )
-
+            # Compute entropy of action distribution of the current policy
             mean_entropy = tf.reduce_mean(action_dist.entropy())
+            # take a minimum between clipped and un-clipped surrogate objective
+            # Take a negative since we performing Gradient Descent
             policy_loss = -tf.reduce_mean(tf.minimum(surrogate, surrogate_cliped))
+            # Adjust mean entropy with a coefficient and subtract from the policy loss
             actor_loss = policy_loss - self.entropy_coeff * mean_entropy
-
+        # take the gradients
         actor_gradients = tape.gradient(actor_loss, self.actor.trainable_variables)
+        # clip gradients by norm
         if self.clip_gradients_by_norm:
             actor_gradients, global_norm = tf.clip_by_global_norm(
                 actor_gradients, self.clip_gradients_by_norm
             )
+        # perform Gradient Descent
         self.actor_optimizer.apply_gradients(
             zip(actor_gradients, self.actor.trainable_variables)
         )
@@ -294,17 +312,17 @@ class PPOAgent:
 
         num_iter = num_iter or self.num_iter
         for i in range(num_iter):
+            # Store statistics of the current update step
             stats = defaultdict(list)
-
+            # sample a training batch
             train_batch, train_batch_stats = self.sample_batch()
-
+            # create a datatset
             obs = train_batch[SampleBatch.OBS]
             actions_old = train_batch[SampleBatch.ACTIONS]
             action_old_log_p = train_batch[SampleBatch.ACTION_LOGP]
             advantages = train_batch[SampleBatch.ADVANTAGES].astype("float32")
             value_targets = train_batch[SampleBatch.VALUE_TARGETS].astype("float32")
             old_value_pred = train_batch[SampleBatch.VF_PREDS].astype("float32")
-
             dataset = (
                 tf.data.Dataset.from_tensor_slices(
                     (
@@ -327,14 +345,15 @@ class PPOAgent:
                 value_target_batch,
                 old_value_pred_batch,
             ) in dataset:
-
+                # if critic is not used critic loss is zero
                 critic_loss = tf.constant([0])
+                # update critic
                 if self.use_critic:
-                    critic_loss = self.train_batch_critic(
+                    critic_loss = self.train_op_critic(
                         obs_batch, value_target_batch, old_value_pred_batch
                     )
-
-                policy_loss, mean_entropy, actor_loss = self.train_actor_batch(
+                # update actor
+                policy_loss, mean_entropy, actor_loss = self.train_op_actor(
                     obs_batch, action_old_batch, action_old_log_p_batch, advantage_batch
                 )
                 stats["policy_loss"].append(policy_loss.numpy().item())
@@ -400,19 +419,21 @@ def run_episode(env, agent):
 if __name__ == "__main__":
     agent = PPOAgent(
         config=dict(
-            env_or_env_name="LunarLanderContinuous-v2",
+            # env_or_env_name="LunarLanderContinuous-v2",
+            # env_or_env_name="LunarLander-v2",
+            env_or_env_name=ContinuousCartPoleEnv(),
             logdir=join("Experiments", "ppo_default"),
             use_tensorboard=False,
             explore=True,
             clip_value=0.2,
             gamma=0.99,
-            num_iter=6,
+            num_iter=20,
             num_epochs=20,
-            train_batch_size=4000,
-            sgd_minibatch_size=128,
-            num_dim_actor=(64, 64, 128),
+            train_batch_size=1024,
+            sgd_minibatch_size=32,
+            num_dim_actor=(32, 32,),
             act_f_actor="tanh",
-            num_dim_critic=(64, 64, 128),
+            num_dim_critic=(32, 32,),
             act_f_critic="tanh",
             entropy_coeff=1e-3,
             lr=0.00025,
@@ -425,17 +446,4 @@ if __name__ == "__main__":
             standardize_advantages=True,
         )
     )
-    from gym.wrappers import Monitor
-
     history = agent.run()
-    #
-    # plt.plot(history["mean_score"])
-    # plt.plot(history["min_score"])
-    # plt.plot(history["max_score"])
-    # plt.show()
-    pass
-    # from time import time
-    #
-    # start = time()
-    # training_batch = sample_batch(env, agent, 200)
-    # print(time() - start)
