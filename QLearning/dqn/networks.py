@@ -103,7 +103,7 @@ class DeepQNetwork:
     ):
         # We assume that if have received a uint8 this means we need to normalize
         if replay_state.dtype == "uint8":
-            replay_state = replay_state.astype("float32") / 255.0
+            replay_state = tf.cast(replay_state, tf.float32) / 255.0
 
         replay_continues = 1.0 - terminal
         # get max q-values for the next state

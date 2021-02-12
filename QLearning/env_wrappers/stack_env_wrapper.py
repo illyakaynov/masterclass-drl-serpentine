@@ -4,19 +4,19 @@ from gym.spaces.box import Box
 
 import matplotlib.pyplot as plt
 
-from env_wrappers.preproccessing_wrapper import AtariPreprocessing
+from QLearning.env_wrappers.preproccessing_wrapper import AtariPreprocessing
 
 
-def plot_stack(buffer):
-    size = int(np.ceil(np.sqrt(buffer.shape[0])))
-    fig, ax = plt.subplots(size, size, figsize=(20, 20), )
-    for i in range(buffer.shape[-1]):
-        ax.flat[i].imshow(buffer[..., i], cmap='gray')
+def plot_stack(frame_stack):
+    num_frames = frame_stack.shape[-1]
+    fig, ax = plt.subplots(1, num_frames, figsize=(20, 20), )
+    for i in range(num_frames):
+        ax.flat[i].imshow(frame_stack[..., i], cmap='gray')
+        ax.flat[i].grid(False)
     plt.show()
 
 
-
-class StackEnvWrapper(AtariPreprocessing):
+class AtariFrameStack(AtariPreprocessing):
     """A class implementing image preprocessing for Atari 2600 agents.
 
     Specifically, this provides the following subset from the JAIR paper
@@ -97,8 +97,12 @@ class StackEnvWrapper(AtariPreprocessing):
         return Box(low=0, high=255, shape=(self.screen_size, self.screen_size, self.stack_size),
                    dtype=np.uint8)
 
+    @property
+    def unwrapped(self):
+        return self.environment.unwrapped
+
 if __name__ == "__main__":
-    env = StackEnvWrapper(gym.make('SpaceInvadersNoFrameskip-v4'),
+    env = AtariFrameStack(gym.make('SpaceInvadersNoFrameskip-v4'),
                           frame_skip=4,
                           stack_size=4,
                           skip_init=50,
@@ -107,7 +111,7 @@ if __name__ == "__main__":
 
     stacked_state = env.reset()
     # plot_frame_stack(stacked_state)
-    for i in range(1):
+    for i in range(10):
         stacked_state, reward, terminal, info = env.step(0)
         plot_stack(stacked_state)
     # plot_frame_stack(stacked_state)

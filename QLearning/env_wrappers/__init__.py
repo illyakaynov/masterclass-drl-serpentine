@@ -1,2 +1,2 @@
 from .preproccessing_wrapper import AtariPreprocessing
-from .stack_env_wrapper import StackEnvWrapper
+from .stack_env_wrapper import AtariFrameStack
