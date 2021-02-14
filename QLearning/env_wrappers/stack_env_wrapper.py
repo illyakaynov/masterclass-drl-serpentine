@@ -102,7 +102,7 @@ class AtariFrameStack(AtariPreprocessing):
         return self.environment.unwrapped
 
 if __name__ == "__main__":
-    env = AtariFrameStack(gym.make('SpaceInvadersNoFrameskip-v4'),
+    env = AtariFrameStack(gym.make('PongNoFrameskip-v4'),
                           frame_skip=4,
                           stack_size=4,
                           skip_init=50,

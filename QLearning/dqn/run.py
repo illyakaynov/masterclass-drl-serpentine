@@ -167,3 +167,77 @@ def load_history(path):
 def save_history(history, path):
     import json
     json.dump(str(history), open(path, 'w'))
+
+
+if __name__ == "__main__":
+    import gym
+    from QLearning.env_wrappers import AtariFrameStack
+    from QLearning.dqn import DeepQNetwork, EpsilonGreedyAgent
+    from os.path import join
+
+    EXPERIMENT_FOLDER = 'Experiments/pong_dqn_01'
+    video_folder = join(EXPERIMENT_FOLDER, 'video')
+    save_interval = 100
+
+    env = AtariFrameStack(gym.make('PongNoFrameskip-v4'),
+                          frame_skip=4,
+                          terminal_on_life_loss=False,
+                          screen_size=84,
+                          stack_size=4,
+                          skip_init=1)
+    from gym.wrappers import monitor
+
+    env = gym.wrappers.Monitor(env, video_folder, force=True,
+                               video_callable=lambda episode_id: episode_id % save_interval == 0)
+
+    print('Observation space:', env.observation_space)
+    print('Action space:', env.action_space)
+
+    q_network = DeepQNetwork(
+        state_shape=env.observation_space.shape,
+        n_actions=env.action_space.n,
+        learning_rate=6.25e-5,
+        gamma=0.99,
+        mlp_act_f="relu",
+        cnn_number_of_maps=(16, 32, 32),
+        cnn_kernel_size=(8, 4, 3),
+        cnn_kernel_stride=(4, 2, 1),
+        mlp_value_n_hidden=(256, 512,),
+        mlp_value_act_f="tanh",
+    )
+
+    agent = EpsilonGreedyAgent(
+        n_actions=env.action_space.n,
+        network=q_network,
+        replay_capacity=50000,
+        gamma=0.99,  # discount of future rewards
+        training_start=100,  # start training after x number of steps
+        training_interval=4,  # train every x steps
+        batch_size=32,
+        start_epsilon=1.0,
+        end_epsilon=0.02,
+        epsilon_decay=1e-6,
+        root_folder=EXPERIMENT_FOLDER,
+        save_best=True,
+        save_interval=save_interval
+    )
+
+    # Define history object to hold all statistics. Usefull if you want to continue training
+    history = {}
+
+    # Cell to train the agent. If you want to load the weights, skip this cell.
+    # from QLearning.dqn import run_experiment
+
+    run_experiment(env, agent, runs=2500, history=history,
+                   plot_stats=[
+                       'score',
+                       'return',
+                       'steps_per_game',
+                       'epsilon',
+                       'loss',
+                       'framerate',
+                       'steps'
+                   ]
+                  )
+
+    env.close()

@@ -98,6 +98,9 @@ class EpsilonGreedyAgent(Agent):
         if np.random.rand() < self.epsilon:
             action = np.random.randint(self.n_actions)
         else:
+            if obs.dtype == 'uint8':
+                obs = obs.astype('float32') / 255.0
+
             action = self.network.get_best_action(obs)
             # Since this get_best_action() returns a tensor
             # we convert it to numpy and then to the Python int

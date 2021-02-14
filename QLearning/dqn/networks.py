@@ -22,7 +22,7 @@ class DeepQNetwork:
         mlp_value_act_f="tanh",
     ):
         self.n_actions = n_actions
-        self.state_shape = state_shape
+        self.obs_shape = state_shape
         self.use_cnn = use_cnn
 
         self.mlp_n_hidden = mlp_n_hidden
@@ -35,7 +35,7 @@ class DeepQNetwork:
 
         self.online_network = self.create_model("dqn")
 
-        self.state_shape = state_shape
+        self.obs_shape = state_shape
 
         self.gamma = tf.constant(gamma)
 
@@ -44,7 +44,7 @@ class DeepQNetwork:
 
     def create_model(self, model_name):
         input_obs = tf.keras.Input(
-            shape=self.state_shape, batch_size=None, name="state_input", dtype=tf.float32
+            shape=self.obs_shape, batch_size=None, name="obs_input", dtype=tf.float32
         )
 
         x = self.create_input_embedder(input_obs)
@@ -77,7 +77,7 @@ class DeepQNetwork:
                     padding="valid",
                     activation="relu",
                     name=f"conv_{i}",
-                )(input_tensor)
+                )(x)
             x = Flatten()(x)
 
         else:
@@ -90,34 +90,35 @@ class DeepQNetwork:
         return x
 
     @tf.function
-    def get_best_action(self, state):
-        return tf.argmax(self.online_network(state), axis=1)
+    def get_best_action(self, obs):
+        return tf.argmax(self.online_network(obs), axis=1)
 
     @tf.function
-    def get_best_action_value(self, state):
-        return tf.reduce_max(self.online_network(state), axis=1)
+    def get_best_action_value(self, obs):
+        return tf.reduce_max(self.online_network(obs), axis=1)
 
     @tf.function
     def train_op(
-        self, replay_state, replay_action, replay_rewards, replay_next_state, terminal
+        self, replay_obs, replay_action, replay_rewards, replay_next_obs, terminal
     ):
         # We assume that if have received a uint8 this means we need to normalize
-        if replay_state.dtype == "uint8":
-            replay_state = tf.cast(replay_state, tf.float32) / 255.0
+        if replay_obs.dtype == "uint8":
+            replay_obs = tf.cast(replay_obs, tf.float32) / 255.0
+            replay_next_obs = tf.cast(replay_next_obs, tf.float32) / 255.0
 
         replay_continues = 1.0 - terminal
         # get max q-values for the next state
-        q_best_next = self.get_best_action_value(replay_next_state)
+        q_best_next = self.get_best_action_value(replay_next_obs)
         # calculate target, if episode is over do not add next q-values to the target
         y_val = replay_rewards + replay_continues * self.gamma * q_best_next
         with tf.GradientTape() as tape:
             # calculate current q-values
-            q_values = self.online_network(replay_state)
+            q_values = self.online_network(replay_obs)
             # get the q-values of the executed actions
             q_values_masked = tf.reduce_sum(
                 q_values * tf.one_hot(replay_action, self.n_actions),
                 axis=1,
-                keepdims=True,
+                keepdims=False,
             )
             # calculate loss
             loss = self.loss_layer(q_values_masked, y_val)
@@ -160,8 +161,8 @@ class DoubleDQN(DeepQNetwork):
         self.target_network_update_freq = target_network_update_freq
 
     @tf.function
-    def get_best_action_value(self, state):
-        return tf.reduce_max(self.target_network(state), axis=1)
+    def get_best_action_value(self, obs):
+        return tf.reduce_max(self.target_network(obs), axis=1)
 
     def update(self, *args, **kwargs):
         loss = super().update(*args, **kwargs)
@@ -177,7 +178,7 @@ class DoubleDQN(DeepQNetwork):
 class DuelingDDQN(DoubleDQN):
     def create_model(self, model_name):
         input_obs = tf.keras.Input(
-            shape=self.state_shape, batch_size=None, name="state_input", dtype=tf.float32
+            shape=self.obs_shape, batch_size=None, name="state_input", dtype=tf.float32
         )
 
         x = self.create_input_embedder(input_obs)
@@ -207,7 +208,7 @@ class DuelingDDQN(DoubleDQN):
 class NoisyDuelingDDQN(DuelingDDQN):
     def create_model(self, model_name):
         input_obs = tf.keras.Input(
-            shape=self.state_shape, batch_size=None, name="state_input", dtype=tf.uint8
+            shape=self.obs_shape, batch_size=None, name="state_input", dtype=tf.float32
         )
 
         x = self.create_input_embedder(input_obs)
