@@ -186,6 +186,7 @@ class ReinforceAgent:
 
     def run(self, num_episodes=None, plot_stats=None, plot_period=1, history=None):
         # initialize plots
+        plot_stats = plot_stats or []
         if plot_stats:
             num_plots = len(plot_stats)
             fig, axs = plt.subplots(
@@ -207,9 +208,10 @@ class ReinforceAgent:
             # Get data from the training batch
             obs = train_batch[SampleBatch.OBS]
             actions_old = train_batch[SampleBatch.ACTIONS]
-            returns = train_batch[SampleBatch.RETURNS].astype("float32")
+            returns = train_batch[SampleBatch.RETURNS].astype("float32").squeeze()
             # normalize returns on the batch level
-            returns = np_standardized(returns.squeeze())
+            if self.standardize_returns:
+                returns = np_standardized(returns)
             # perform gradient descent
             policy_loss, total_loss, entropy_bonus = self.train_op(
                 obs, actions_old, returns

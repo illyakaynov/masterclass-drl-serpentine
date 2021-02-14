@@ -7,6 +7,7 @@ from QLearning.dqn import ReplayBuffer
 
 from os.path import join
 
+
 class Agent:
     """
     Interface for the agent class
@@ -26,7 +27,6 @@ class Agent:
 
 
 class RandomAgent(Agent):
-
     def __init__(self, n_actions):
         self.n_actions = n_actions
         self.epsilon = 1.0
@@ -36,21 +36,24 @@ class RandomAgent(Agent):
 
 
 class EpsilonGreedyAgent(Agent):
-    def __init__(self,
-                 n_actions,
-                 network=None,
-                 gamma=0.99,
-                 batch_size=32,
-                 replay_capacity=10000,
-                 training_start=50,  # start training after x number of steps
-                 training_interval=4,  # train every x steps
-                 start_epsilon=1.0,
-                 end_epsilon=0.02,
-                 epsilon_decay=5e-6,
-                 root_folder='saved_run',
-                 save_best=False,
-                 save_interval=None,
-                 ):
+    def __init__(
+        self,
+        n_actions,
+        network=None,
+        gamma=0.99,
+        batch_size=32,
+        replay_capacity=10000,
+        training_start=50,  # start training after x number of steps
+        training_interval=4,  # train every x steps
+        start_epsilon=1.0,
+        end_epsilon=0.02,
+        epsilon_decay=5e-6,
+        root_folder="saved_run",
+        save_best=False,
+        save_interval=None,
+        uint_as_obs=False,  # backwards compatibility with old pre-trained networks
+
+    ):
 
         self.n_actions = n_actions
         self.network = network
@@ -79,6 +82,10 @@ class EpsilonGreedyAgent(Agent):
         self.save_best = save_best
         self.save_interval = save_interval
 
+        # In the previous iteration of the algorithm The input had uint type.
+        # Setting this in case we would like to load old networks
+        self.uint_as_obs = uint_as_obs
+
     def compute_action(self, obs):
         """
         Given the state return the action following epsilon-greedy strategy
@@ -87,7 +94,7 @@ class EpsilonGreedyAgent(Agent):
         :return(int): action
         """
         if self.network is None:
-            message = 'The network is not set. Please, create with Agent(network=network) or use agent.load()'
+            message = "The network is not set. Please, create with Agent(network=network) or use agent.load()"
             print(message)
             raise ValueError()
 
@@ -98,8 +105,8 @@ class EpsilonGreedyAgent(Agent):
         if np.random.rand() < self.epsilon:
             action = np.random.randint(self.n_actions)
         else:
-            if obs.dtype == 'uint8':
-                obs = obs.astype('float32') / 255.0
+            if obs.dtype == "uint8" and not self.uint_as_obs:
+                obs = obs.astype("float32") / 255.0
 
             action = self.network.get_best_action(obs)
             # Since this get_best_action() returns a tensor
@@ -119,16 +126,21 @@ class EpsilonGreedyAgent(Agent):
         :return: loss of the network
         """
         self.return_ = reward + self.gamma * self.return_
-        self.replay_buffer.store((
-            current_state,
-            action,
-            np.asarray(reward, dtype='float32'),
-            next_state,
-            np.asarray(is_terminal, dtype='float32'))
+        self.replay_buffer.store(
+            (
+                current_state,
+                action,
+                np.asarray(reward, dtype="float32"),
+                next_state,
+                np.asarray(is_terminal, dtype="float32"),
+            )
         )
 
         loss = 0
-        train_network = self.training_start < self.steps and self.steps % self.training_interval == 0
+        train_network = (
+            self.training_start < self.steps
+            and self.steps % self.training_interval == 0
+        )
         if train_network:
             sample_batch = self.replay_buffer.sample_batch(self.batch_size)
             loss = self.network.update(*sample_batch)
@@ -146,28 +158,28 @@ class EpsilonGreedyAgent(Agent):
         # Save the best model so far
         if self.save_best and self.return_ > self.best_return and self.runs > 200:
             self.best_return = self.return_
-            self.save_model(join(self.root_folder, 'best'))
+            self.save_model(join(self.root_folder, "best"))
 
         if self.save_interval and self.runs % self.save_interval == 0:
-            self.save_model(join(self.root_folder, f'run{self.runs}'))
+            self.save_model(join(self.root_folder, f"run{self.runs}"))
 
-        stats['runs'] = self.runs
+        stats["runs"] = self.runs
         self.runs += 1
 
         # reset episode return
-        stats['return'] = self.return_
+        stats["return"] = self.return_
         self.return_ = 0
 
         # update exploration
-        stats['epsilon'] = self.epsilon
+        stats["epsilon"] = self.epsilon
         self.update_epsilon(self.steps)
 
         # get mean of the losses for this episode
         loss = np.mean(self.episode_losses) if self.episode_losses else 0
-        stats['loss'] = loss
+        stats["loss"] = loss
         self.episode_losses = []
 
-        stats['steps'] = self.steps
+        stats["steps"] = self.steps
 
         return stats
 
@@ -177,12 +189,12 @@ class EpsilonGreedyAgent(Agent):
         :param time_step: current timestep
         :return:
         """
-        self.epsilon = self.min_espilon + \
-                       (self.max_epsilon - self.min_espilon) \
-                       * math.exp(-self.epsilon_decay * time_step)
+        self.epsilon = self.min_espilon + (
+            self.max_epsilon - self.min_espilon
+        ) * math.exp(-self.epsilon_decay * time_step)
 
-    def save_model(self, filepath='saved_model'):
+    def save_model(self, filepath="saved_model"):
         self.network.save(filepath=filepath)
 
-    def load_model(self, filepath='saved_model'):
+    def load_model(self, filepath="saved_model"):
         self.network.load(filepath=filepath)

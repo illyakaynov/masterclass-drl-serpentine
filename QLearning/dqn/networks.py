@@ -216,9 +216,9 @@ class NoisyDuelingDDQN(DuelingDDQN):
         x = Flatten()(x)
 
         for i, n_dim in enumerate(self.mlp_value_n_hidden):
-            x = NoisyDense(n_dim, activation=self.mlp_value_act_f, name=f"dense_value_{i}")(
-                x
-            )
+            x = NoisyDense(
+                n_dim, activation=self.mlp_value_act_f, name=f"dense_value_{i}"
+            )(x)
 
         value = NoisyDense(1, activation="linear", name="hidden_dense_value")(x)
         advantage = NoisyDense(

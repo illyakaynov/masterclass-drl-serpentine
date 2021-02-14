@@ -6,7 +6,6 @@ import gym
 import numpy as np
 import seaborn as sns
 import tensorflow as tf
-import tensorflow.keras.backend as K
 import yaml
 from gym.spaces import Box
 from IPython.core import display
@@ -265,12 +264,14 @@ class PPOAgent:
             # calculate the importance sampling probability ratio r(\theta)
             prob_ratio = tf.exp(log_p - tf.squeeze(action_old_log_p_batch))
             # Normalize the advantages (zero mean, unit variance)
-            advantage_batch = tf_standardized(tf.squeeze(advantage_batch))
+            advantage_batch = advantage_batch.squeeze()
+            if self.standardize_advantages:
+                advantage_batch = tf_standardized(advantage_batch)
             # Compute surrogate objective
             surrogate = prob_ratio * advantage_batch
             # Compute clipped surrogate objective
             surrogate_cliped = (
-                K.clip(prob_ratio, 1 - self.clip_value, 1 + self.clip_value)
+                tf.clip_by_value(prob_ratio, 1 - self.clip_value, 1 + self.clip_value)
                 * advantage_batch
             )
             # Compute entropy of action distribution of the current policy
@@ -296,6 +297,7 @@ class PPOAgent:
 
     def run(self, num_iter=None, plot_stats=None, plot_period=1, history=None):
         # initialize plots
+        plot_stats = plot_stats or []
         if plot_stats:
             num_plots = len(plot_stats)
             fig, axs = plt.subplots(
@@ -431,9 +433,15 @@ if __name__ == "__main__":
             num_epochs=20,
             train_batch_size=1024,
             sgd_minibatch_size=32,
-            num_dim_actor=(32, 32,),
+            num_dim_actor=(
+                32,
+                32,
+            ),
             act_f_actor="tanh",
-            num_dim_critic=(32, 32,),
+            num_dim_critic=(
+                32,
+                32,
+            ),
             act_f_critic="tanh",
             entropy_coeff=1e-3,
             lr=0.00025,

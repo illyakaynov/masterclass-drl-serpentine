@@ -1,7 +1,12 @@
+from collections import defaultdict
+
+import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
+from IPython.core import display
 
 
-class LogisticPolicy:
+class LogisticAgent:
     def __init__(self, params, lr, gamma):
         # Initialize paramters, learning rate and discount factor
 
@@ -17,12 +22,12 @@ class LogisticPolicy:
     def action_probs(self, x):
         # returns probabilities of two actions
 
-        y = x @ self.params
+        y = np.dot(x, self.params)
         prob0 = self.logistic(y)
 
         return np.array([prob0, 1 - prob0])
 
-    def act(self, x):
+    def compute_action(self, x):
         # sample an action in proportion to probabilities
 
         probs = self.action_probs(x)
@@ -39,9 +44,8 @@ class LogisticPolicy:
 
         return grad_log_p0, grad_log_p1
 
-    def grad_log_p_dot_rewards(self, grad_log_p, actions, discounted_rewards):
+    def grad_log_p_dot_rewards(self, grad_log_p, discounted_rewards):
         # dot grads with future rewards for each action in episode
-
         return np.dot(grad_log_p.T, discounted_rewards)
 
     def discount_rewards(self, rewards):
@@ -67,13 +71,13 @@ class LogisticPolicy:
         discounted_rewards = self.discount_rewards(rewards)
 
         # gradients times rewards
-        dot = self.grad_log_p_dot_rewards(grad_log_p, actions, discounted_rewards)
+        grad_surrogate_objective = self.grad_log_p_dot_rewards(grad_log_p, discounted_rewards)
 
         # gradient ascent on parameters
-        self.params += self.lr * dot
+        self.params += self.lr * grad_surrogate_objective
 
 
-def run_episode(env, policy, render=False):
+def run_episode(env, agent, render=False):
 
     observation = env.reset()
     totalreward = 0
@@ -91,7 +95,7 @@ def run_episode(env, policy, render=False):
 
         observations.append(observation)
 
-        action, prob = policy.act(observation)
+        action, prob = agent.compute_action(observation)
         observation, reward, done, info = env.step(action)
 
         totalreward += reward
@@ -113,58 +117,72 @@ def train(
     params,
     lr,
     gamma,
-    policy,
+    agent_cls,
     MAX_EPISODES=1000,
+    plot_stats=None,
+    plot_period=1,
     seed=None,
     evaluate=False,
     video_folder="",
 ):
+    plot_stats = plot_stats or []
+    if plot_stats:
+        num_plots = len(plot_stats)
+        fig, axs = plt.subplots(
+            num_plots, 1, squeeze=False, figsize=(10, 5 * num_plots)
+        )
+        axs = axs.ravel()
 
-    # initialize environment and policy
+    history = defaultdict(list)
+
+    # initialize environment and the agent
     if seed is not None:
         env.seed(seed)
     episode_rewards = []
-    policy = policy(params, lr, gamma)
+    agent = agent_cls(params, lr, gamma)
 
     # train until MAX_EPISODES
-    import time
-
     for i in range(MAX_EPISODES):
-        # time.sleep(0.1)
-        # env.render()
+        stats = {}
         # run a single episode
-        total_reward, rewards, observations, actions, probs = run_episode(env, policy)
-
+        total_reward, rewards, observations, actions, probs = run_episode(env, agent)
         # keep track of episode rewards
         episode_rewards.append(total_reward)
+        # update agent
+        agent.update(rewards, observations, actions)
+        stats["score"] = total_reward
 
-        # update policy
-        policy.update(rewards, observations, actions)
-        print(
-            "EP: " + str(i) + " Score: " + str(total_reward) + " ",
-            end="\r",
-            flush=False,
-        )
+        for k, v in stats.items():
+            history[k].append(v)
 
-    # evaluation call after training is finished - evaluate last trained policy on 100 episodes
-    if evaluate:
-        env = Monitor(
-            env, video_folder, video_callable=True, force=True
-        )
-        for _ in range(100):
-            run_episode(env, policy, render=False)
-        env.env.close()
+        if plot_stats:
+            if (i + 1) % plot_period == 0:
+                for ax, stat_name in zip(axs, plot_stats):
+                    ax.clear()
+                    # print(stat_name, len(history[stat_name]))
 
-    return episode_rewards, policy
+                    sns.lineplot(
+                        x=np.arange(len(history[stat_name])),
+                        y=history[stat_name],
+                        ax=ax,
+                    )
+
+                    ax.set_title(stat_name)
+                display.display(fig)
+                display.clear_output(wait=True)
+
+        else:
+            print(
+                f"episode {i}/{MAX_EPISODES} | {stats}",
+            )
+
+    return episode_rewards, agent
 
 
 if __name__ == "__main__":
-    # additional imports for saving and loading a trained policy
     import gym
     import gym.wrappers
-    from gym.wrappers.monitor import Monitor, load_results
 
-    # for reproducibility
     GLOBAL_SEED = 0
     np.random.seed(GLOBAL_SEED)
     env = gym.make("CartPole-v0")
@@ -174,14 +192,9 @@ if __name__ == "__main__":
         params=np.random.rand(4),
         lr=0.002,
         gamma=0.99,
-        policy=LogisticPolicy,
+        agent_cls=LogisticAgent,
         MAX_EPISODES=2000,
         seed=GLOBAL_SEED,
-        evaluate=False,
-        video_folder="Experiments/logistic_pg_cartpole/",
+        plot_stats=['score'],
+        plot_period=100,
     )
-
-    import matplotlib.pyplot as plt
-
-    plt.plot(episode_rewards)
-    plt.show()

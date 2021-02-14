@@ -94,9 +94,11 @@ def run_experiment(env,
      multiple times without loosing the data about the training process
     :return: (dict) history
     """
-    num_plots = len(plot_stats)
-    fig, axs = plt.subplots(num_plots, 1, squeeze=False, figsize=(10, 5 * num_plots))
-    axs = axs.ravel()
+    plot_stats = plot_stats or []
+    if plot_stats:
+        num_plots = len(plot_stats)
+        fig, axs = plt.subplots(num_plots, 1, squeeze=False, figsize=(10, 5 * num_plots))
+        axs = axs.ravel()
 
     history = history or {}
     history = defaultdict(list, history)
@@ -118,7 +120,7 @@ def run_experiment(env,
         history["total_episodes"].append(total_episodes)
 
         if plot_stats:
-            if i % plot_period == 0:
+            if (i + 1) % plot_period == 0:
                 for ax, stat_name in zip(axs, plot_stats):
                     ax.clear()
                     # print(stat_name, len(history[stat_name]))
@@ -166,7 +168,7 @@ def load_history(path):
 
 def save_history(history, path):
     import json
-    json.dump(str(history), open(path, 'w'))
+    json.dump(str(dict(**history)), open(path, 'w'))
 
 
 if __name__ == "__main__":
