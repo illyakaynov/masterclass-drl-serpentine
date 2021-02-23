@@ -264,7 +264,7 @@ class PPOAgent:
             # calculate the importance sampling probability ratio r(\theta)
             prob_ratio = tf.exp(log_p - tf.squeeze(action_old_log_p_batch))
             # Normalize the advantages (zero mean, unit variance)
-            advantage_batch = advantage_batch.squeeze()
+            advantage_batch = tf.squeeze(advantage_batch)
             if self.standardize_advantages:
                 advantage_batch = tf_standardized(advantage_batch)
             # Compute surrogate objective
